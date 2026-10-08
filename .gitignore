@@ -1,0 +1,10 @@
+.DS_Store
+.dart_tool/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+**/pubspec.lock
+packages/anchored_health_native/example/ios/Podfile.lock
+.idea/
+*.iml
+.fvm/

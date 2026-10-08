@@ -1,0 +1,23 @@
+name: anchored_health_engine
+description: >-
+  Health sync engine: HealthBridge interface, type mapping (app vital types <->
+  HealthKit/Health Connect), anchor/token state, echo protection, dedupe,
+  blood pressure as one type. No value assessment.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.8.0
+  flutter: ">=3.32.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  crypto: ^3.0.3
+  anchored_health_native:
+    path: ../anchored_health_native
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0

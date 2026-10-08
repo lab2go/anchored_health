@@ -1,0 +1,27 @@
+name: anchored_health_native
+description: >-
+  iOS HealthKit bridge (Pigeon): authorization, anchored queries with
+  deletions, sample model with device/source/metadata, blood pressure
+  correlation, save with sync metadata, delete. Android: Dart stub only.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.8.0
+  flutter: ">=3.32.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  pigeon: ^27.3.0
+
+flutter:
+  plugin:
+    platforms:
+      ios:
+        pluginClass: AnchoredHealthNativePlugin
