@@ -21,13 +21,15 @@ abstract final class HealthKitMetadataKeys {
 class NativeHealthBridge implements HealthBridge {
   NativeHealthBridge({
     AnchoredHealthNative? native,
-    this.includeBloodPressureCorrelation = true,
+    this.includeBloodPressureCorrelation = false,
     this.deviceName,
   }) : native = native ?? AnchoredHealthNative();
 
   final AnchoredHealthNative native;
 
-  /// Also request the correlation type in the read set.
+  /// Deprecated and ignored by the native side: HealthKit disallows correlation
+  /// types in the read set (the app would be terminated), so only the systolic
+  /// and diastolic quantity types are requested.
   final bool includeBloodPressureCorrelation;
 
   /// Name of the `HKDevice` attached to written values (e.g. the app name);

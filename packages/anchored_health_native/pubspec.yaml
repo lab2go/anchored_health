@@ -3,7 +3,7 @@ description: >-
   iOS HealthKit bridge (Pigeon): authorization, anchored queries with
   deletions, sample model with device/source/metadata, blood pressure
   correlation, save with sync metadata, delete. Android: Dart stub only.
-version: 0.1.0
+version: 0.1.1
 publish_to: none
 
 environment:

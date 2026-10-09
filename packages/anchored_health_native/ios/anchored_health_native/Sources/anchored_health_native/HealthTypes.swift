@@ -82,13 +82,16 @@ enum HealthDataType: String, CaseIterable {
     return HealthDataType.bloodPressureCorrelationType
   }
 
-  /// Read permissions. Blood pressure: both quantity types, optionally the
-  /// correlation type as well.
+  /// Read permissions. Blood pressure: both quantity types only. HealthKit
+  /// rejects correlation types in the read set as well as in the share set
+  /// (NSInvalidArgumentException "Authorization to read the following types is
+  /// disallowed"), which cannot be caught from Swift and terminates the app.
+  /// Reading the correlation samples needs authorization of the two quantity
+  /// types only. `includeBloodPressureCorrelation` is kept for API
+  /// compatibility and is ignored.
   func readObjectTypes(includeBloodPressureCorrelation: Bool) -> Set<HKObjectType> {
     if let id = quantityIdentifier { return [HKQuantityType(id)] }
-    var set: Set<HKObjectType> = [HealthDataType.systolicType, HealthDataType.diastolicType]
-    if includeBloodPressureCorrelation { set.insert(HealthDataType.bloodPressureCorrelationType) }
-    return set
+    return [HealthDataType.systolicType, HealthDataType.diastolicType]
   }
 
   /// Write permissions. Correlation types must not be in the share set

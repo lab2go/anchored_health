@@ -61,16 +61,17 @@ class RunnerTests: XCTestCase {
 
   // MARK: Authorization
 
-  func testAuthorizationSetsUnionWithCorrelationAndCharacteristics() throws {
+  func testAuthorizationSetsNeverContainCorrelationAndUnionCharacteristics() throws {
     let sets = try HealthDataType.authorizationSets(
       read: ["bloodPressure", "bodyMass", "bloodGlucose"], write: ["bloodPressure"],
       characteristics: true, includeBloodPressureCorrelation: true)
-    XCTAssertTrue(sets.read.contains(HKCorrelationType(.bloodPressure)))
+    // HealthKit disallows correlation types in the read set (ObjC exception, app termination).
+    XCTAssertFalse(sets.read.contains(HKCorrelationType(.bloodPressure)))
     XCTAssertTrue(sets.read.contains(HKQuantityType(.bloodPressureSystolic)))
     XCTAssertTrue(sets.read.contains(HKQuantityType(.bloodPressureDiastolic)))
     XCTAssertTrue(sets.read.contains(HKCharacteristicType(.dateOfBirth)))
     XCTAssertTrue(sets.read.contains(HKCharacteristicType(.biologicalSex)))
-    XCTAssertEqual(sets.read.count, 7)
+    XCTAssertEqual(sets.read.count, 6)
     // Never a correlation in the share set (HealthKit raises an ObjC exception otherwise).
     XCTAssertEqual(
       sets.share, [HKQuantityType(.bloodPressureSystolic), HKQuantityType(.bloodPressureDiastolic)])
