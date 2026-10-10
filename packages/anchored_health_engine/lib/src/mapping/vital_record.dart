@@ -26,6 +26,7 @@ class VitalRecord {
     this.endAt,
     this.timezoneId,
     this.sourceDeviceName,
+    this.sourceName,
     this.recordingMethod = RecordingMethod.unknown,
     this.valueSecondary,
     this.unknownFields = 0,
@@ -41,6 +42,10 @@ class VitalRecord {
   final String? timezoneId;
   final String sourcePackage;
   final String? sourceDeviceName;
+
+  /// Display name of the data source (HealthSample.sourceName, e.g. "Withings"). Display only:
+  /// NOT part of [ContentHash] (dedupe stays unchanged).
+  final String? sourceName;
   final RecordingMethod recordingMethod;
 
   /// Canonical value; blood pressure = systolic.
@@ -69,6 +74,7 @@ class VitalRecord {
         'timezone_id': timezoneId,
         'source_package': sourcePackage,
         'source_device_name': sourceDeviceName,
+        'source_name': sourceName,
         'recording_method': recordingMethod.name,
         'value_numeric': valueNumeric,
         'value_secondary': valueSecondary,
@@ -200,6 +206,7 @@ class VitalMapper {
       timezoneId: s.timeZoneId,
       sourcePackage: s.sourcePackage,
       sourceDeviceName: s.deviceName,
+      sourceName: s.sourceName,
       recordingMethod: s.recordingMethod,
       valueNumeric: primary,
       valueSecondary: secondary,

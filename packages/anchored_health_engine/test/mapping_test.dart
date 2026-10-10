@@ -104,9 +104,23 @@ void main() {
       // Exhaustive list: adding a field like status/ref_*/zone makes this fail.
       expect(r.toJson().keys.toSet(), {
         'external_id', 'external_version', 'vital_type_id', 'platform_type', 'measured_at', 'end_at',
-        'timezone_id', 'source_package', 'source_device_name', 'recording_method', 'value_numeric',
+        'timezone_id', 'source_package', 'source_device_name', 'source_name', 'recording_method', 'value_numeric',
         'value_secondary', 'unit', 'granularity', 'content_hash', 'map_version', 'unknown_fields',
       });
+    });
+  });
+
+  group('source_name', () {
+    test('is carried to the record and the JSON, but not into the content hash', () {
+      final entry = catalog.entryFor(ios, 'bodyMass', VitalKey.bodyWeight);
+      final a = mapper.map(sample(id: 'a', value: 72.4, sourceName: 'Withings'), entry).record!;
+      final b = mapper.map(sample(id: 'a', value: 72.4, sourceName: 'Other Name'), entry).record!;
+      final c = mapper.map(sample(id: 'a', value: 72.4), entry).record!;
+      expect(a.sourceName, 'Withings');
+      expect(a.toJson()['source_name'], 'Withings');
+      expect(c.toJson()['source_name'], isNull);
+      expect(a.contentHash, b.contentHash, reason: 'source_name is display only');
+      expect(a.contentHash, c.contentHash);
     });
   });
 
