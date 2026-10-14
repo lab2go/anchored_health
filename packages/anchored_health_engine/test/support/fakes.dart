@@ -218,6 +218,8 @@ const vitalIds = <VitalKey, String>{
   VitalKey.respiratoryRate: 'vt-rr',
   VitalKey.bloodGlucose: 'vt-glucose',
   VitalKey.glucoseSensor: 'vt-cgm',
+  VitalKey.hrvSdnn: 'vt-hrv',
+  VitalKey.vo2Max: 'vt-vo2',
 };
 
 TypeCatalog testCatalog() => TypeCatalog.v1Default().withVitalTypeIds(vitalIds);

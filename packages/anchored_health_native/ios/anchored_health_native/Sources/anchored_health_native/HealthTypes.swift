@@ -52,11 +52,15 @@ enum HealthDataType: String, CaseIterable {
     case .oxygenSaturation, .bodyFatPercentage: return .percent()
     case .bloodGlucose: return HKUnit(from: "mg/dL")
     case .heartRateVariabilitySDNN: return .secondUnit(with: .milli)
-    case .vo2Max: return HKUnit(from: "ml/kg*min")
+    case .vo2Max:
+      return HKUnit.literUnit(with: .milli)
+        .unitDivided(by: HKUnit.gramUnit(with: .kilo))
+        .unitDivided(by: HKUnit.minute())
     }
   }
 
-  var unitString: String { unit.unitString }
+  // Stable wire spelling, independent of HealthKit's compound-unit printer.
+  var unitString: String { self == .vo2Max ? "ml/kg/min" : unit.unitString }
 
   /// Only these types may be written. Other types are rejected before any
   /// HealthKit call.
