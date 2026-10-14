@@ -19,6 +19,11 @@ dependency pinned to a commit SHA. All test values are synthetic.
 **No assessment:** records have no field for status, reference range, zone or
 target range. A test checks the complete field list.
 
+Engine 0.1.3 also imports HRV **SDNN** in milliseconds and VO2 max in
+`ml/kg/min`, without writing either type back. Source precision, timestamps and
+provenance are preserved. SDNN is not substituted with Health Connect RMSSD.
+Apps must explicitly select the new read types; an upgrade grants no permissions.
+
 ## Interface (summary)
 
 ```dart

@@ -4,7 +4,7 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'anchored_health_native'
-  s.version          = '0.1.0'
+  s.version          = '0.1.2'
   s.summary          = 'HealthKit bridge (Pigeon).'
   s.description      = <<-DESC
 Authorization, anchored queries with deletions, sample model, blood pressure

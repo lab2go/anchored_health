@@ -235,7 +235,25 @@ const _v1Entries = <TypeMappingEntry>[
       backfillDefaultDays: 14,
       backfillCapDays: 90,
       seriesSources: iosGlucoseSeriesSources),
+  TypeMappingEntry(
+      platform: _ios,
+      platformType: 'heartRateVariabilitySDNN',
+      vitalKey: VitalKey.hrvSdnn,
+      unitPlatform: 'ms',
+      backfillClass: BackfillClass.discrete),
+  TypeMappingEntry(
+      platform: _ios,
+      platformType: 'vo2Max',
+      vitalKey: VitalKey.vo2Max,
+      unitPlatform: 'ml/kg/min',
+      backfillClass: BackfillClass.discrete),
   // --- Health Connect (record names) ---
+  TypeMappingEntry(
+      platform: _hc,
+      platformType: 'Vo2MaxRecord',
+      vitalKey: VitalKey.vo2Max,
+      unitPlatform: 'ml/kg/min',
+      backfillClass: BackfillClass.discrete),
   TypeMappingEntry(
       platform: _hc,
       platformType: 'BloodPressureRecord',
