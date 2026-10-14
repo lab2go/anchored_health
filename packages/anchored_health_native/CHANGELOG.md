@@ -1,3 +1,7 @@
+## 0.1.2
+
+- Construct VO2 max as milliliters / kilograms / minutes and use stable `ml/kg/min` transport spelling. Existing SDNN support remains in milliseconds; both types are read only.
+
 ## 0.1.1
 
 - Fix: the blood pressure correlation type is never part of the read authorization set anymore. HealthKit rejects it with an uncatchable NSInvalidArgumentException ("Authorization to read the following types is disallowed"), which terminated the app. Only the systolic and diastolic quantity types are requested; `includeBloodPressureCorrelation` now defaults to false and is ignored natively.

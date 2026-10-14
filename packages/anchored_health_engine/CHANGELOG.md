@@ -1,3 +1,8 @@
+## 0.1.3
+
+- Read-only HRV (SDNN, milliseconds) and VO2 max (ml/kg/min) mappings. SDNN has no Health Connect counterpart in this catalog; RMSSD is not substituted.
+- VO2 max keeps the precision and provenance supplied by the source. No assessment or extra write authorization.
+
 ## 0.1.1
 
 - Fix: the blood pressure correlation type is never part of the read authorization set anymore. HealthKit rejects it with an uncatchable NSInvalidArgumentException ("Authorization to read the following types is disallowed"), which terminated the app. Only the systolic and diastolic quantity types are requested; `includeBloodPressureCorrelation` now defaults to false and is ignored natively.

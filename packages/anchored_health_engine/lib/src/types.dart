@@ -26,7 +26,11 @@ enum VitalKey {
   bloodGlucose('Blood glucose (meter/manual)', 'mg/dL', '41653-7'),
 
   /// CGM series (interstitial glucose), kept apart from blood glucose readings.
-  glucoseSensor('Glucose (sensor)', 'mg/dL', null);
+  glucoseSensor('Glucose (sensor)', 'mg/dL', null),
+
+  /// SDNN, never RMSSD or a newly calculated variability score.
+  hrvSdnn('Heart rate variability (SDNN)', 'ms', null),
+  vo2Max('VO2 max', 'ml/kg/min', null);
 
   const VitalKey(this.label, this.canonicalUnit, this.loinc);
 

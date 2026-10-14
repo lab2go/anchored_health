@@ -12,7 +12,7 @@ void main() {
     test('every v1 vital type is importable on iOS and Android', () {
       for (final p in HealthPlatform.values) {
         final keys = catalog.entries.where((e) => e.platform == p && e.importSupported).map((e) => e.vitalKey).toSet();
-        expect(keys, VitalKey.values.toSet(), reason: p.id);
+        expect(keys, VitalKey.values.where((k) => p == HealthPlatform.appleHealth || k != VitalKey.hrvSdnn).toSet(), reason: p.id);
       }
     });
 

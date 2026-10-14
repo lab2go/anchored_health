@@ -44,6 +44,25 @@ class RunnerTests: XCTestCase {
     XCTAssertEqual(HealthDataType.heartRate.unitString, "count/min")
     XCTAssertEqual(HealthDataType.oxygenSaturation.unitString, "%")
     XCTAssertEqual(HealthDataType.heartRateVariabilitySDNN.unitString, "ms")
+    XCTAssertEqual(HealthDataType.vo2Max.unitString, "ml/kg/min")
+  }
+
+  func testHrvAndVo2AreReadOnlyAndKeepUnits() throws {
+    let sets = try HealthDataType.authorizationSets(
+      read: ["heartRateVariabilitySDNN", "vo2Max"], write: [],
+      characteristics: false, includeBloodPressureCorrelation: false)
+    XCTAssertEqual(sets.read, [HKQuantityType(.heartRateVariabilitySDNN), HKQuantityType(.vo2Max)])
+    XCTAssertTrue(sets.share.isEmpty)
+    for raw in ["heartRateVariabilitySDNN", "vo2Max"] {
+      XCTAssertThrowsError(try HealthDataType.authorizationSets(
+        read: [], write: [raw], characteristics: false, includeBloodPressureCorrelation: false))
+    }
+    let vo2Unit = HKUnit.literUnit(with: .milli)
+      .unitDivided(by: HKUnit.gramUnit(with: .kilo)).unitDivided(by: .minute())
+    let q = HKQuantity(unit: vo2Unit, doubleValue: 42.375)
+    XCTAssertEqual(q.doubleValue(for: HealthDataType.vo2Max.unit), 42.375, accuracy: 0.000001)
+    let sdnn = HKQuantity(unit: .second(), doubleValue: 0.043125)
+    XCTAssertEqual(sdnn.doubleValue(for: HealthDataType.heartRateVariabilitySDNN.unit), 43.125, accuracy: 0.000001)
   }
 
   func testBloodPressureUsesCorrelationType() {
