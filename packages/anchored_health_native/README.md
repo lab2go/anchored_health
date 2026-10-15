@@ -6,7 +6,7 @@ platforms the Dart facade throws `HealthPlatformUnsupported`.
 Platform types: `bloodPressure` (HKCorrelation), `heartRate`, `restingHeartRate`,
 `bodyMass`, `height`, `bodyTemperature`, `oxygenSaturation`, `respiratoryRate`,
 `bloodGlucose`, plus read-only `heartRateVariabilitySDNN`, `bodyFatPercentage`,
-`waistCircumference`, `vo2Max`. Every type has a fixed unit (`unitFor`).
+`waistCircumference`, `vo2Max`, `sleepAnalysis` (category type, value = stage code). Every type has a fixed unit (`unitFor`).
 Percentages follow the HealthKit convention (0...1).
 
 Writing is allowed for blood pressure, heart rate, body mass, height, body

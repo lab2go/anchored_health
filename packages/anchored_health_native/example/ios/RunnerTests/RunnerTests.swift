@@ -45,6 +45,9 @@ class RunnerTests: XCTestCase {
     XCTAssertEqual(HealthDataType.oxygenSaturation.unitString, "%")
     XCTAssertEqual(HealthDataType.heartRateVariabilitySDNN.unitString, "ms")
     XCTAssertEqual(HealthDataType.vo2Max.unitString, "ml/kg/min")
+    XCTAssertEqual(HealthDataType.bodyFatPercentage.unitString, "%")
+    XCTAssertEqual(HealthDataType.waistCircumference.unitString, "cm")
+    XCTAssertEqual(HealthDataType.sleepAnalysis.unitString, "stage")
   }
 
   func testHrvAndVo2AreReadOnlyAndKeepUnits() throws {
@@ -63,6 +66,66 @@ class RunnerTests: XCTestCase {
     XCTAssertEqual(q.doubleValue(for: HealthDataType.vo2Max.unit), 42.375, accuracy: 0.000001)
     let sdnn = HKQuantity(unit: .second(), doubleValue: 0.043125)
     XCTAssertEqual(sdnn.doubleValue(for: HealthDataType.heartRateVariabilitySDNN.unit), 43.125, accuracy: 0.000001)
+  }
+
+  func testSleepAnalysisIsReadOnlyCategory() throws {
+    let t = HealthDataType.sleepAnalysis
+    XCTAssertFalse(t.isWritable)
+    XCTAssertEqual(t.sampleType, HKCategoryType(.sleepAnalysis))
+    XCTAssertEqual(t.readObjectTypes(includeBloodPressureCorrelation: false), [HKCategoryType(.sleepAnalysis)])
+    XCTAssertThrowsError(try HealthDataType.authorizationSets(
+      read: [], write: ["sleepAnalysis"], characteristics: false, includeBloodPressureCorrelation: false))
+    let sets = try HealthDataType.authorizationSets(
+      read: ["sleepAnalysis"], write: [], characteristics: false, includeBloodPressureCorrelation: false)
+    XCTAssertTrue(sets.share.isEmpty)
+    XCTAssertEqual(sets.read, [HKCategoryType(.sleepAnalysis)])
+  }
+
+  func testMakeSampleSleepStageCarriesIntervalAndCode() throws {
+    guard #available(iOS 16.0, *) else { throw XCTSkip("sleep stages need iOS 16") }
+    let start = Date(timeIntervalSince1970: 1_760_220_000)
+    let end = start.addingTimeInterval(3600)
+    let c = HKCategorySample(
+      type: HKCategoryType(.sleepAnalysis), value: HKCategoryValueSleepAnalysis.asleepDeep.rawValue,
+      start: start, end: end)
+    let s = try HealthCodec.makeSample(c, type: .sleepAnalysis, source: fakeSource)
+    XCTAssertEqual(s.value, 4)
+    XCTAssertEqual(s.unit, "stage")
+    XCTAssertEqual(s.startMs, HealthCodec.millis(start))
+    XCTAssertEqual(s.endMs, HealthCodec.millis(end))
+    let inBed = HKCategorySample(
+      type: HKCategoryType(.sleepAnalysis), value: HKCategoryValueSleepAnalysis.inBed.rawValue,
+      start: start, end: end)
+    XCTAssertEqual(try HealthCodec.makeSample(inBed, type: .sleepAnalysis, source: fakeSource).value, 0)
+    let q = HKQuantitySample(
+      type: HKQuantityType(.bodyMass), quantity: HKQuantity(unit: .gramUnit(with: .kilo), doubleValue: 70),
+      start: start, end: start)
+    XCTAssertThrowsError(try HealthCodec.makeSample(q, type: .sleepAnalysis, source: fakeSource))
+  }
+
+  func testTimeZoneMetadataOnlyIana() {
+    XCTAssertEqual(HealthCodec.sanitizedTimeZone("Europe/Berlin"), "Europe/Berlin")
+    XCTAssertEqual(HealthCodec.sanitizedTimeZone("UTC"), "UTC")
+    XCTAssertNil(HealthCodec.sanitizedTimeZone("GMT+02:00"))
+    XCTAssertNil(HealthCodec.sanitizedTimeZone("UTC-05:30"))
+    XCTAssertNil(HealthCodec.sanitizedTimeZone("Mars/Olympus Mons"))
+    XCTAssertNil(HealthCodec.sanitizedTimeZone(""))
+    let md = HealthCodec.metadataToPigeon([HKMetadataKeyTimeZone: "GMT+01:00", "x": "y"])
+    XCTAssertNil(md[HKMetadataKeyTimeZone] ?? nil)
+    XCTAssertEqual(md["x"] as? String, "y")
+    let ok = HealthCodec.metadataToPigeon([HKMetadataKeyTimeZone: "Europe/Berlin"])
+    XCTAssertEqual(ok[HKMetadataKeyTimeZone] as? String, "Europe/Berlin")
+  }
+
+  /// HealthKit numbering the server relies on (sleep_nights, Health Connect mapping).
+  func testSleepStageRawValues() throws {
+    guard #available(iOS 16.0, *) else { throw XCTSkip("sleep stages need iOS 16") }
+    XCTAssertEqual(HKCategoryValueSleepAnalysis.inBed.rawValue, 0)
+    XCTAssertEqual(HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue, 1)
+    XCTAssertEqual(HKCategoryValueSleepAnalysis.awake.rawValue, 2)
+    XCTAssertEqual(HKCategoryValueSleepAnalysis.asleepCore.rawValue, 3)
+    XCTAssertEqual(HKCategoryValueSleepAnalysis.asleepDeep.rawValue, 4)
+    XCTAssertEqual(HKCategoryValueSleepAnalysis.asleepREM.rawValue, 5)
   }
 
   func testBloodPressureUsesCorrelationType() {

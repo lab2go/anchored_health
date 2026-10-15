@@ -19,11 +19,23 @@ enum HealthDataType: String, CaseIterable {
   case bodyFatPercentage
   case waistCircumference
   case vo2Max
+  /// Sleep analysis (category type). Value = HKCategoryValueSleepAnalysis raw
+  /// value: 0 inBed, 1 asleepUnspecified, 2 awake, 3 asleepCore, 4 asleepDeep,
+  /// 5 asleepREM. One sample per interval; never written.
+  case sleepAnalysis
 
-  /// Quantity type; nil for blood pressure (correlation).
+  /// Category type; nil for quantity and correlation types.
+  var categoryIdentifier: HKCategoryTypeIdentifier? {
+    switch self {
+    case .sleepAnalysis: return .sleepAnalysis
+    default: return nil
+    }
+  }
+
+  /// Quantity type; nil for blood pressure (correlation) and category types.
   var quantityIdentifier: HKQuantityTypeIdentifier? {
     switch self {
-    case .bloodPressure: return nil
+    case .bloodPressure, .sleepAnalysis: return nil
     case .heartRate: return .heartRate
     case .restingHeartRate: return .restingHeartRate
     case .bodyMass: return .bodyMass
@@ -56,11 +68,19 @@ enum HealthDataType: String, CaseIterable {
       return HKUnit.literUnit(with: .milli)
         .unitDivided(by: HKUnit.gramUnit(with: .kilo))
         .unitDivided(by: HKUnit.minute())
+    case .sleepAnalysis: return .count()
     }
   }
 
-  // Stable wire spelling, independent of HealthKit's compound-unit printer.
-  var unitString: String { self == .vo2Max ? "ml/kg/min" : unit.unitString }
+  /// Unit label sent with every sample. Fixed text where HealthKit's
+  /// `unitString` is not a stable, readable label (VO2 max; sleep has no unit).
+  var unitString: String {
+    switch self {
+    case .vo2Max: return "ml/kg/min"
+    case .sleepAnalysis: return "stage"
+    default: return unit.unitString
+    }
+  }
 
   /// Only these types may be written. Other types are rejected before any
   /// HealthKit call.
@@ -83,6 +103,7 @@ enum HealthDataType: String, CaseIterable {
   /// Type used for anchored queries, sample queries and deletion.
   var sampleType: HKSampleType {
     if let id = quantityIdentifier { return HKQuantityType(id) }
+    if let id = categoryIdentifier { return HKCategoryType(id) }
     return HealthDataType.bloodPressureCorrelationType
   }
 
@@ -95,6 +116,7 @@ enum HealthDataType: String, CaseIterable {
   /// compatibility and is ignored.
   func readObjectTypes(includeBloodPressureCorrelation: Bool) -> Set<HKObjectType> {
     if let id = quantityIdentifier { return [HKQuantityType(id)] }
+    if let id = categoryIdentifier { return [HKCategoryType(id)] }
     return [HealthDataType.systolicType, HealthDataType.diastolicType]
   }
 
@@ -102,6 +124,7 @@ enum HealthDataType: String, CaseIterable {
   /// (HealthKit raises an Objective-C exception otherwise).
   var shareSampleTypes: Set<HKSampleType> {
     if let id = quantityIdentifier { return [HKQuantityType(id)] }
+    if let id = categoryIdentifier { return [HKCategoryType(id)] }
     return [HealthDataType.systolicType, HealthDataType.diastolicType]
   }
 

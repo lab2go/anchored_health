@@ -7,6 +7,7 @@ HealthSample sample({
   required String id,
   String type = 'bodyMass',
   DateTime? at,
+  DateTime? end,
   double? value = 70,
   double? sys,
   double? dia,
@@ -23,7 +24,7 @@ HealthSample sample({
     externalId: id,
     platformType: type,
     start: t,
-    end: t,
+    end: end ?? t,
     value: sys != null ? null : value,
     systolic: sys,
     diastolic: dia,
@@ -220,6 +221,9 @@ const vitalIds = <VitalKey, String>{
   VitalKey.glucoseSensor: 'vt-cgm',
   VitalKey.hrvSdnn: 'vt-hrv',
   VitalKey.vo2Max: 'vt-vo2',
+  VitalKey.bodyFatPercentage: 'vt-fat',
+  VitalKey.waistCircumference: 'vt-waist',
+  VitalKey.sleepStage: 'vt-sleep',
 };
 
 TypeCatalog testCatalog() => TypeCatalog.v1Default().withVitalTypeIds(vitalIds);

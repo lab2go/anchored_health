@@ -46,11 +46,25 @@ enum HealthCodec {
 
   // MARK: Reading metadata
 
+  /// HKTimeZone of foreign sources: only a real IANA name is passed on. Foundation also accepts
+  /// offset spellings such as "GMT+02:00", which PostgreSQL reads as POSIX zones with the opposite sign.
+  static func sanitizedTimeZone(_ raw: String) -> String? {
+    let t = raw.trimmingCharacters(in: .whitespaces)
+    guard !t.isEmpty, t.count <= 64, TimeZone(identifier: t) != nil else { return nil }
+    if t.range(of: "^(GMT|UTC)[+-]", options: .regularExpression) != nil { return nil }
+    return t
+  }
+
   /// HK metadata to Pigeon-compatible values: bool/number/string stay, date -> ms, rest -> text.
+  /// HKTimeZone is dropped unless it is a real IANA name (see `sanitizedTimeZone`).
   static func metadataToPigeon(_ metadata: [String: Any]?) -> [String?: Any?] {
     var out: [String?: Any?] = [:]
     guard let metadata = metadata else { return out }
     for (key, value) in metadata {
+      if key == HKMetadataKeyTimeZone {
+        if let s = value as? String, let tz = sanitizedTimeZone(s) { out[key] = tz }
+        continue
+      }
       switch value {
       case let s as String: out[key] = s
       case let n as NSNumber:
@@ -188,6 +202,11 @@ enum HealthCodec {
         systolic: sys.quantity.doubleValue(for: type.unit),
         diastolic: dia.quantity.doubleValue(for: type.unit),
         systolicUuid: sys.uuid.uuidString, diastolicUuid: dia.uuid.uuidString)
+    } else if type.categoryIdentifier != nil {
+      guard let c = s as? HKCategorySample, c.categoryType == type.sampleType else {
+        throw PigeonError(code: "invalid_sample", message: "Unexpected sample", details: s.uuid.uuidString)
+      }
+      value = Double(c.value)
     } else {
       guard let q = s as? HKQuantitySample, q.quantity.is(compatibleWith: type.unit) else {
         throw PigeonError(code: "invalid_sample", message: "Unexpected sample", details: s.uuid.uuidString)

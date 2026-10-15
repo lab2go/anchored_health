@@ -55,6 +55,19 @@ HkSample bpSample() => HkSample(
     );
 
 void main() {
+  test('HKTimeZone: IANA names pass, GMT/UTC offsets and junk become null', () {
+    for (final ok in ['Europe/Berlin', 'UTC', 'GMT', 'America/Argentina/Buenos_Aires', 'Etc/GMT+2']) {
+      expect(NativeHealthBridge.sanitizeTimeZoneId(ok), ok, reason: ok);
+    }
+    for (final bad in ['GMT+02:00', 'GMT+01:00', 'UTC-0530', '', '  ', 'Mars/Olympus Mons', 'x' * 65, 42, null]) {
+      expect(NativeHealthBridge.sanitizeTimeZoneId(bad), isNull, reason: '$bad');
+    }
+    final s = NativeHealthBridge.sampleFromNative(HkSample(
+        uuid: 'TZ-1', type: 'sleepAnalysis', startMs: 0, endMs: 60000, value: 3, unit: 'stage',
+        source: HkSource(bundleId: 'com.example.ring', name: 'Ring'), metadata: {'HKTimeZone': 'GMT+02:00'}));
+    expect(s.timeZoneId, isNull);
+  });
+
   test('Pigeon sample -> engine sample: correlation, device, metadata', () {
     final s = NativeHealthBridge.sampleFromNative(bpSample());
     expect(s.externalId, 'CORR-1');

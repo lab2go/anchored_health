@@ -220,10 +220,11 @@ class HealthSyncEngine {
     }
   }
 
-  /// Start time of the first run per type: discrete = everything (null),
+  /// Start time of the first run per type: discrete = everything (null) unless
+  /// every discrete entry names a default window (e.g. sleep stages: 365 days),
   /// aggregate = cap, series only = default window.
   DateTime? _firstRunFrom(List<TypeMappingEntry> entries, DateTime now) {
-    if (entries.any((e) => e.backfillClass == BackfillClass.discrete)) return null;
+    if (entries.any((e) => e.backfillClass == BackfillClass.discrete && e.backfillDefaultDays == null)) return null;
     final days = entries
         .map((e) => e.backfillDefaultDays ?? e.backfillCapDays)
         .whereType<int>()

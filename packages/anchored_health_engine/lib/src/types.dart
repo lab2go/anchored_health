@@ -28,9 +28,24 @@ enum VitalKey {
   /// CGM series (interstitial glucose), kept apart from blood glucose readings.
   glucoseSensor('Glucose (sensor)', 'mg/dL', null),
 
-  /// SDNN, never RMSSD or a newly calculated variability score.
+  // --- Read only (0.2.0) ---
+
+  /// Heart rate variability, SDNN (HealthKit only; Health Connect knows RMSSD).
   hrvSdnn('Heart rate variability (SDNN)', 'ms', null),
-  vo2Max('VO2 max', 'ml/kg/min', null);
+
+  /// VO2 max (cardio fitness estimate as recorded by the source).
+  vo2Max('VO2 max', 'ml/kg/min', null),
+
+  /// Body fat percentage.
+  bodyFatPercentage('Body fat percentage', '%', null),
+
+  /// Waist circumference (HealthKit only).
+  waistCircumference('Waist circumference', 'cm', '8280-0'),
+
+  /// One sleep analysis interval. Value = stage code (HealthKit numbering of
+  /// HKCategoryValueSleepAnalysis): 0 in bed, 1 asleep (unspecified),
+  /// 2 awake, 3 core, 4 deep, 5 REM. Start/end carry the interval.
+  sleepStage('Sleep stage', 'stage', null);
 
   const VitalKey(this.label, this.canonicalUnit, this.loinc);
 

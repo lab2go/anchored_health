@@ -185,8 +185,21 @@ class NativeHealthBridge implements HealthBridge {
       syncIdentifier: md[HealthKitMetadataKeys.syncIdentifier] as String?,
       syncVersion: sv is int ? sv : (sv is num ? sv.toInt() : null),
       externalUuid: md[HealthKitMetadataKeys.externalUuid] as String?,
-      timeZoneId: md[HealthKitMetadataKeys.timeZone] as String?,
+      timeZoneId: sanitizeTimeZoneId(md[HealthKitMetadataKeys.timeZone]),
     );
+  }
+
+  /// HKTimeZone of foreign sources is free text. Offset spellings such as
+  /// `GMT+02:00` are not IANA names (PostgreSQL would read them as POSIX
+  /// zones with the opposite sign), empty or overlong values are useless:
+  /// both become null (the record then has no time zone).
+  static String? sanitizeTimeZoneId(Object? raw) {
+    if (raw is! String) return null;
+    final t = raw.trim();
+    if (t.isEmpty || t.length > 64) return null;
+    if (RegExp(r'^(GMT|UTC)[+-]').hasMatch(t)) return null;
+    if (!RegExp(r'^[A-Za-z][A-Za-z0-9_+\-]*(/[A-Za-z0-9_+\-]+)*$').hasMatch(t)) return null;
+    return t;
   }
 
   /// Engine request -> Pigeon save request (sync metadata).

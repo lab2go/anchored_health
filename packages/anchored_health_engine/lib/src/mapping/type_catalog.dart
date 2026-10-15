@@ -235,6 +235,7 @@ const _v1Entries = <TypeMappingEntry>[
       backfillDefaultDays: 14,
       backfillCapDays: 90,
       seriesSources: iosGlucoseSeriesSources),
+  // Read only (0.2.0). Units = HealthDataType.unitString of the native plugin.
   TypeMappingEntry(
       platform: _ios,
       platformType: 'heartRateVariabilitySDNN',
@@ -247,6 +248,26 @@ const _v1Entries = <TypeMappingEntry>[
       vitalKey: VitalKey.vo2Max,
       unitPlatform: 'ml/kg/min',
       backfillClass: BackfillClass.discrete),
+  TypeMappingEntry(
+      platform: _ios,
+      platformType: 'bodyFatPercentage',
+      vitalKey: VitalKey.bodyFatPercentage,
+      unitPlatform: '%',
+      factor: 100, // HealthKit delivers 0...1
+      backfillClass: BackfillClass.discrete),
+  TypeMappingEntry(
+      platform: _ios,
+      platformType: 'waistCircumference',
+      vitalKey: VitalKey.waistCircumference,
+      unitPlatform: 'cm',
+      backfillClass: BackfillClass.discrete),
+  TypeMappingEntry(
+      platform: _ios,
+      platformType: 'sleepAnalysis',
+      vitalKey: VitalKey.sleepStage,
+      unitPlatform: 'stage',
+      backfillClass: BackfillClass.discrete,
+      backfillDefaultDays: 365),
   // --- Health Connect (record names) ---
   TypeMappingEntry(
       platform: _hc,
@@ -328,4 +349,27 @@ const _v1Entries = <TypeMappingEntry>[
       backfillDefaultDays: 14,
       backfillCapDays: 90,
       seriesSources: androidGlucoseSeriesSources),
+  // Read only (0.2.0). Health Connect has no SDNN and no waist circumference.
+  TypeMappingEntry(
+      platform: _hc,
+      platformType: 'Vo2MaxRecord',
+      vitalKey: VitalKey.vo2Max,
+      unitPlatform: 'ml/kg/min',
+      backfillClass: BackfillClass.discrete),
+  TypeMappingEntry(
+      platform: _hc,
+      platformType: 'BodyFatRecord',
+      vitalKey: VitalKey.bodyFatPercentage,
+      unitPlatform: '%',
+      backfillClass: BackfillClass.discrete),
+  TypeMappingEntry(
+      platform: _hc,
+      platformType: 'SleepSessionRecord',
+      vitalKey: VitalKey.sleepStage,
+      unitPlatform: 'stage',
+      backfillClass: BackfillClass.discrete,
+      backfillDefaultDays: 365),
 ];
+
+/// Keys without a Health Connect counterpart.
+const healthKitOnlyKeys = <VitalKey>{VitalKey.hrvSdnn, VitalKey.waistCircumference};

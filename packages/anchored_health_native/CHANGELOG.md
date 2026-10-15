@@ -1,3 +1,9 @@
+## 0.2.0 (draft, no tag)
+
+- Sleep analysis intervals and stage codes; 365-day initial window.
+- Preserve SDNN and compound VO2 units from 0.1.3/0.1.2.
+- IANA-only time zone metadata. Read-only category authorization.
+
 ## 0.1.2
 
 - Construct VO2 max as milliliters / kilograms / minutes and use stable `ml/kg/min` transport spelling. Existing SDNN support remains in milliseconds; both types are read only.

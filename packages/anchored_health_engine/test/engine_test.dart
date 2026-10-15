@@ -22,6 +22,27 @@ void main() {
       expect(h.bridge.calls.last, startsWith('changes:bodyMass:2:'));
     });
 
+    test('sleep stages: first run reads 365 days, intervals keep their end, code 0 is kept', () async {
+      final h = EngineHarness();
+      final now = h.clockNow;
+      final a = now.subtract(const Duration(days: 2));
+      h.bridge.addAll([
+        sample(id: 'old', type: 'sleepAnalysis', value: 3, unit: 'stage', at: now.subtract(const Duration(days: 400)),
+            end: now.subtract(const Duration(days: 400)).add(const Duration(hours: 1))),
+        sample(id: 'bed', type: 'sleepAnalysis', value: 0, unit: 'stage', at: a, end: a.add(const Duration(hours: 8))),
+        sample(id: 'deep', type: 'sleepAnalysis', value: 4, unit: 'stage', at: a.add(const Duration(hours: 1)),
+            end: a.add(const Duration(hours: 2))),
+      ]);
+      final r = await h.sync({'sleepAnalysis'});
+      expect(r.outcome, SyncOutcome.success);
+      expect(h.uploader.rows.keys.toSet(), {'bed', 'deep'}, reason: 'sample older than 365 days is not read on the first run');
+      final from = now.subtract(const Duration(days: 365)).toIso8601String();
+      expect(h.bridge.calls.first, endsWith(from));
+      expect(h.uploader.rows['bed']!.valueNumeric, 0);
+      expect(h.uploader.rows['bed']!.endAt, a.add(const Duration(hours: 8)));
+      expect(h.uploader.rows['deep']!.unit, 'stage');
+    });
+
     test('anchor only advances after a successful upload; retry imports the rest', () async {
       final h = EngineHarness();
       h.bridge.add(sample(id: 'w1'));

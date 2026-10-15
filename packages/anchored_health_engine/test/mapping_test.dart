@@ -12,7 +12,10 @@ void main() {
     test('every v1 vital type is importable on iOS and Android', () {
       for (final p in HealthPlatform.values) {
         final keys = catalog.entries.where((e) => e.platform == p && e.importSupported).map((e) => e.vitalKey).toSet();
-        expect(keys, VitalKey.values.where((k) => p == HealthPlatform.appleHealth || k != VitalKey.hrvSdnn).toSet(), reason: p.id);
+        final want = p == HealthPlatform.appleHealth
+            ? VitalKey.values.toSet()
+            : VitalKey.values.toSet().difference(healthKitOnlyKeys);
+        expect(keys, want, reason: p.id);
       }
     });
 
@@ -54,6 +57,52 @@ void main() {
     test('sensor glucose is labelled apart from blood glucose', () {
       expect(VitalKey.glucoseSensor.label, 'Glucose (sensor)');
       expect(VitalKey.values.map((k) => k.label).toSet(), hasLength(VitalKey.values.length));
+    });
+  });
+
+  group('read-only types 0.2.0', () {
+    test('body fat 0...1 from HealthKit becomes percent', () {
+      final r = mapper
+          .map(sample(id: 'bf', type: 'bodyFatPercentage', value: 0.215, unit: '%'),
+              catalog.entryFor(ios, 'bodyFatPercentage', VitalKey.bodyFatPercentage))
+          .record!;
+      expect(r.valueNumeric, closeTo(21.5, 1e-9));
+      expect(r.unit, '%');
+    });
+
+    test('HRV, VO2 max and waist keep their value and unit', () {
+      for (final c in [
+        ('heartRateVariabilitySDNN', VitalKey.hrvSdnn, 'ms', 48.0),
+        ('vo2Max', VitalKey.vo2Max, 'ml/kg/min', 41.3),
+        ('waistCircumference', VitalKey.waistCircumference, 'cm', 84.0),
+      ]) {
+        final r = mapper.map(sample(id: c.$1, type: c.$1, value: c.$4, unit: c.$3), catalog.entryFor(ios, c.$1, c.$2)).record!;
+        expect(r.valueNumeric, c.$4, reason: c.$1);
+        expect(r.unit, c.$2.canonicalUnit, reason: c.$1);
+        expect(r.endAt, isNull, reason: c.$1);
+      }
+    });
+
+    test('sleep stage is an interval with the stage code as value (0 = in bed is kept)', () {
+      final e = catalog.entryFor(ios, 'sleepAnalysis', VitalKey.sleepStage)!;
+      expect(e.importSupported, isTrue);
+      expect(e.exportSupported, isFalse, reason: 'sleep is never written');
+      final start = DateTime.utc(2026, 10, 11, 21);
+      final end = DateTime.utc(2026, 10, 12, 5, 30);
+      final r = mapper
+          .map(sample(id: 's0', type: 'sleepAnalysis', value: 0, unit: 'stage', at: start, end: end), e)
+          .record!;
+      expect(r.valueNumeric, 0);
+      expect(r.unit, 'stage');
+      expect(r.measuredAt, start);
+      expect(r.endAt, end);
+      expect(r.backfillClass, BackfillClass.discrete);
+    });
+
+    test('a foreign unit is skipped, not converted', () {
+      final m = mapper.map(sample(id: 'x', type: 'vo2Max', value: 40, unit: 'mL/(kg*min)'),
+          catalog.entryFor(ios, 'vo2Max', VitalKey.vo2Max));
+      expect(m.skip, MappingSkip.incompatibleUnit);
     });
   });
 

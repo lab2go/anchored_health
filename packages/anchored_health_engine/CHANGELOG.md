@@ -1,3 +1,9 @@
+## 0.2.0 (draft, no tag)
+
+- Sleep analysis intervals and stage codes; 365-day initial window.
+- Preserve SDNN and compound VO2 units from 0.1.3/0.1.2.
+- IANA-only time zone metadata. Read-only category authorization.
+
 ## 0.1.3
 
 - Read-only HRV (SDNN, milliseconds) and VO2 max (ml/kg/min) mappings. SDNN has no Health Connect counterpart in this catalog; RMSSD is not substituted.
