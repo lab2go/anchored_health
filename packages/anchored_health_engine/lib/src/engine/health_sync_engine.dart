@@ -94,6 +94,18 @@ class SyncRunResult {
   int operator [](String key) => counters[key] ?? 0;
 }
 
+/// Counter-only observation of one backfill invocation. Values are never exposed.
+/// [windowsDone] includes resumed windows; [valuesRead] counts this invocation.
+/// Window totals are NOT estimates of the number of health samples.
+class BackfillProgress {
+  const BackfillProgress({required this.type, required this.windowsDone,
+    required this.totalWindows, required this.valuesRead});
+  final String type;
+  final int windowsDone;
+  final int totalWindows;
+  final int valuesRead;
+}
+
 /// Engine for the import direction. No export and no assessment of values:
 /// only values, provenance and counters are moved.
 class HealthSyncEngine {
@@ -332,6 +344,7 @@ class HealthSyncEngine {
     String type, {
     required DateTime from,
     required DateTime to,
+    void Function(BackfillProgress progress)? onProgress,
   }) async {
     if (!_sessionMatches(link)) return SyncRunResult(SyncOutcome.sessionMismatch);
     final scope = link.scope;
@@ -346,11 +359,21 @@ class HealthSyncEngine {
     try {
       var cursor = await state.backfillCursor(scope, type) ??
           BackfillCursor.split(from, to, maxWindow: config.seriesBackfillWindow);
+      var valuesRead = 0;
+      void emit() {
+        // An observer failure must not lose an uploaded window/cursor or lock.
+        try {
+          onProgress?.call(BackfillProgress(type: type, windowsDone: cursor.done,
+            totalWindows: cursor.windows.length, valuesRead: valuesRead));
+        } catch (_) {}
+      }
       await state.saveBackfillCursor(scope, type, cursor);
+      emit();
       while (!cursor.isComplete) {
         final w = cursor.windows[cursor.done];
         try {
           final samples = await bridge.read(type, from: w.from, to: w.to);
+          valuesRead += samples.length;
           await _process(link, type, entries, samples, const [], run, result);
         } catch (_) {
           outcome = cursor.done == 0 ? SyncOutcome.error : SyncOutcome.partial;
@@ -359,6 +382,7 @@ class HealthSyncEngine {
         cursor = cursor.advance();
         run.add('windows_done');
         await state.saveBackfillCursor(scope, type, cursor);
+        emit();
       }
       if (cursor.isComplete) await state.clearBackfillCursor(scope, type);
     } finally {
