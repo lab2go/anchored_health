@@ -21,6 +21,12 @@ export 'src/messages.g.dart'
         HkAnchoredQueryResult,
         HkSaveRequest,
         HkCharacteristics,
+        HkDailyTotal,
+        HkDailyTotalsRequest,
+        HkDailyTotalsResult,
+        HkSampleRef,
+        HkSampleRefsRequest,
+        HkSampleRefsResult,
         AnchoredHealthApi;
 
 /// Thrown on platforms without an implementation.
@@ -86,6 +92,35 @@ class AnchoredHealthNative {
     DateTime? to,
   }) =>
       _checked.anchoredQuery(HkAnchoredQueryRequest(
+        type: type,
+        anchor: anchor,
+        limit: limit,
+        fromMs: from?.toUtc().millisecondsSinceEpoch,
+        toMs: to?.toUtc().millisecondsSinceEpoch,
+      ));
+
+  /// Daily totals (`HKStatisticsCollectionQuery`, `cumulativeSum`) of a
+  /// cumulative activity type for the local days [fromDay] to [toDay], both
+  /// inclusive, as `YYYY-MM-DD`. Days are cut at local midnight of the device
+  /// (23 or 25 hours on DST changes). Days without data are missing in the
+  /// result (never 0).
+  Future<HkDailyTotalsResult> dailyTotals({
+    required String type,
+    required String fromDay,
+    required String toDay,
+  }) =>
+      _checked.dailyTotals(HkDailyTotalsRequest(type: type, fromDay: fromDay, toDay: toDay));
+
+  /// Sample references and deleted UUIDs of a cumulative activity type since
+  /// [anchor] (no values, sources or metadata).
+  Future<HkSampleRefsResult> sampleRefs({
+    required String type,
+    String? anchor,
+    int limit = 5000,
+    DateTime? from,
+    DateTime? to,
+  }) =>
+      _checked.sampleRefs(HkSampleRefsRequest(
         type: type,
         anchor: anchor,
         limit: limit,

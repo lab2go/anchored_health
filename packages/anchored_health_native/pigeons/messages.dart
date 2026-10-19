@@ -164,6 +164,87 @@ class HkSaveRequest {
   String? deviceName;
 }
 
+/// One local calendar day with data of a cumulative type (daily total).
+class HkDailyTotal {
+  HkDailyTotal({
+    required this.day,
+    required this.value,
+    required this.startMs,
+    required this.endMs,
+  });
+
+  /// Local calendar day of the device, `YYYY-MM-DD` (Gregorian).
+  String day;
+
+  /// `HKStatistics.sumQuantity()` in the fixed plugin unit of the type.
+  /// Overlapping sources (iPhone + Apple Watch) are already merged by
+  /// HealthKit; the sum is never split by source.
+  double value;
+
+  /// Real start and end of the day (23 or 25 hours on DST changes), ms since
+  /// epoch (UTC).
+  int startMs;
+  int endMs;
+}
+
+/// Daily totals of one cumulative type for the local days `fromDay` to
+/// `toDay` (both inclusive, `YYYY-MM-DD`, device time zone).
+class HkDailyTotalsRequest {
+  HkDailyTotalsRequest({
+    required this.type,
+    required this.fromDay,
+    required this.toDay,
+  });
+  String type;
+  String fromDay;
+  String toDay;
+}
+
+/// Days **without** data are not part of `days` (no sum is not 0).
+class HkDailyTotalsResult {
+  HkDailyTotalsResult({required this.days, required this.timeZoneId});
+  List<HkDailyTotal> days;
+
+  /// IANA identifier of the device time zone the days were cut in.
+  String timeZoneId;
+}
+
+/// Light-weight reference to a sample (no value, source or metadata); used to
+/// find the days a change or deletion touches.
+class HkSampleRef {
+  HkSampleRef({
+    required this.uuid,
+    required this.startMs,
+    required this.endMs,
+  });
+  String uuid;
+  int startMs;
+  int endMs;
+}
+
+class HkSampleRefsRequest {
+  HkSampleRefsRequest({required this.type, required this.limit});
+  String type;
+
+  /// Base64 of an `HKQueryAnchor`; null = from the beginning.
+  String? anchor;
+
+  /// Maximum number of references per call (0 = no limit).
+  int limit;
+
+  /// Optional window on the sample start time (`fromMs` inclusive, `toMs`
+  /// exclusive). Deletions are never limited by the window.
+  int? fromMs;
+  int? toMs;
+}
+
+class HkSampleRefsResult {
+  HkSampleRefsResult({required this.refs, required this.deletedUuids});
+  List<HkSampleRef> refs;
+  List<String> deletedUuids;
+  String? nextAnchor;
+}
+
 class HkCharacteristics {
   int? birthYear;
   int? birthMonth;
@@ -217,6 +298,18 @@ abstract class AnchoredHealthApi {
   /// Deletes own objects by UUID; returns the number of deleted objects.
   @async
   int delete(String type, List<String> uuids);
+
+  /// Daily totals (`HKStatisticsCollectionQuery`, `cumulativeSum`, local day
+  /// boundaries of the device) for a cumulative activity type: `stepCount`,
+  /// `distanceWalkingRunning`, `activeEnergyBurned`, `flightsClimbed`,
+  /// `appleExerciseTime`. Other types give `invalid_argument`.
+  @async
+  HkDailyTotalsResult dailyTotals(HkDailyTotalsRequest request);
+
+  /// Anchored query that only returns sample references and deleted UUIDs of a
+  /// cumulative activity type (no values, sources or metadata).
+  @async
+  HkSampleRefsResult sampleRefs(HkSampleRefsRequest request);
 
   /// Date of birth / biological sex (comparison only, nothing is stored).
   HkCharacteristics characteristics();

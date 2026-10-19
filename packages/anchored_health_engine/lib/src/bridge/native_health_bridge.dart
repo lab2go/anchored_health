@@ -1,5 +1,7 @@
 import 'package:anchored_health_native/anchored_health_native.dart';
 
+import '../activity/activity_bridge.dart';
+import '../activity/local_day.dart';
 import '../models.dart';
 import '../types.dart';
 import 'health_bridge.dart';
@@ -18,7 +20,7 @@ abstract final class HealthKitMetadataKeys {
 
 /// iOS implementation of [HealthBridge] via `anchored_health_native`.
 /// On iOS, only this plugin should call `requestAuthorization`.
-class NativeHealthBridge implements HealthBridge {
+class NativeHealthBridge implements HealthBridge, ActivityDailyBridge {
   NativeHealthBridge({
     AnchoredHealthNative? native,
     this.includeBloodPressureCorrelation = false,
@@ -155,6 +157,40 @@ class NativeHealthBridge implements HealthBridge {
   Future<HealthCharacteristics?> characteristics() async {
     final c = await native.characteristics();
     return HealthCharacteristics(birthYear: c.birthYear, biologicalSex: c.biologicalSex);
+  }
+
+  /// Daily totals of a cumulative activity type (`HKStatisticsCollectionQuery`,
+  /// `cumulativeSum`, local day boundaries of the device).
+  @override
+  Future<DailyTotalsPage> dailyTotals(String platformType, {required LocalDay from, required LocalDay to}) async {
+    final r = await native.dailyTotals(type: platformType, fromDay: from.iso, toDay: to.iso);
+    final days = <DailyTotal>[];
+    for (final d in r.days) {
+      final day = LocalDay.tryParse(d.day);
+      if (day == null) continue; // not a day label: ignore instead of guessing
+      days.add(DailyTotal(day: day, value: d.value));
+    }
+    return DailyTotalsPage(days: days, timeZoneId: r.timeZoneId.isEmpty ? null : r.timeZoneId);
+  }
+
+  /// Sample references since [anchor] of a cumulative activity type.
+  @override
+  Future<ActivityRefsPage> sampleRefs(String platformType, {String? anchor, DateTime? from, int limit = 5000}) async {
+    final r = await native.sampleRefs(type: platformType, anchor: anchor, limit: limit, from: from);
+    final hasMore = limit > 0 && (r.refs.length >= limit || r.deletedUuids.length >= limit);
+    return ActivityRefsPage(
+      refs: [
+        for (final x in r.refs)
+          ActivitySampleRef(
+            uuid: x.uuid,
+            start: DateTime.fromMillisecondsSinceEpoch(x.startMs, isUtc: true),
+            end: DateTime.fromMillisecondsSinceEpoch(x.endMs, isUtc: true),
+          )
+      ],
+      deletedUuids: r.deletedUuids,
+      nextAnchor: r.nextAnchor ?? anchor,
+      hasMore: hasMore,
+    );
   }
 
   /// Pigeon sample -> engine sample.

@@ -1,3 +1,19 @@
+## 0.3.0 (draft, no tag)
+
+- Daily activity totals (read only): `VitalKey.steps`, `walkingRunningDistance`,
+  `activeEnergy`, `flightsClimbed`, `exerciseMinutes`; `BackfillClass.dailySum`;
+  catalog entries `stepCount`, `distanceWalkingRunning`, `activeEnergyBurned`,
+  `flightsClimbed`, `appleExerciseTime` (365 days default, 1825 cap). Health
+  Connect entries are placeholders (`importSupported: false`).
+- `ActivityDailyReader` (period read), `ActivityDailySync` (anchored reference
+  query, day recompute, UUID -> day index, batches by type and period, run lock,
+  time zone of the server, `forget`), `ActivityDailyBridge` (`NativeHealthBridge`
+  implements it), `ActivityDailyUploader` / `ActivityIngestElement` for the RPC
+  `health_ingest_daily`.
+- `HealthSyncEngine.syncNow` / `extendBackfill` skip `dailySum` types.
+- Rules: no tombstone and no 0 for an empty read; one fixed merged `source_package`;
+  no `external_version`.
+
 ## 0.2.0 (draft, no tag)
 
 - Sleep analysis intervals and stage codes; 365-day initial window.

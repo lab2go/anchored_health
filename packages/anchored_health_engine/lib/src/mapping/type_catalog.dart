@@ -119,6 +119,13 @@ class TypeCatalog {
     return null;
   }
 
+  /// Entries of the daily-total types (`BackfillClass.dailySum`) that can be
+  /// imported on [platform].
+  List<TypeMappingEntry> dailySumEntries(HealthPlatform platform) => [
+        for (final e in entries)
+          if (e.platform == platform && e.importSupported && e.backfillClass == BackfillClass.dailySum) e
+      ];
+
   /// Platform types that can be imported.
   Set<String> importPlatformTypes(HealthPlatform platform) => {
         for (final e in entries)
@@ -268,6 +275,48 @@ const _v1Entries = <TypeMappingEntry>[
       unitPlatform: 'stage',
       backfillClass: BackfillClass.discrete,
       backfillDefaultDays: 365),
+  // Daily totals (0.3.0), read only. The platform value is the daily sum in the
+  // canonical unit (no conversion). 365 days by default, 1825 at most.
+  TypeMappingEntry(
+      platform: _ios,
+      platformType: 'stepCount',
+      vitalKey: VitalKey.steps,
+      unitPlatform: 'count',
+      backfillClass: BackfillClass.dailySum,
+      backfillDefaultDays: 365,
+      backfillCapDays: 1825),
+  TypeMappingEntry(
+      platform: _ios,
+      platformType: 'distanceWalkingRunning',
+      vitalKey: VitalKey.walkingRunningDistance,
+      unitPlatform: 'm',
+      backfillClass: BackfillClass.dailySum,
+      backfillDefaultDays: 365,
+      backfillCapDays: 1825),
+  TypeMappingEntry(
+      platform: _ios,
+      platformType: 'activeEnergyBurned',
+      vitalKey: VitalKey.activeEnergy,
+      unitPlatform: 'kcal',
+      backfillClass: BackfillClass.dailySum,
+      backfillDefaultDays: 365,
+      backfillCapDays: 1825),
+  TypeMappingEntry(
+      platform: _ios,
+      platformType: 'flightsClimbed',
+      vitalKey: VitalKey.flightsClimbed,
+      unitPlatform: 'count',
+      backfillClass: BackfillClass.dailySum,
+      backfillDefaultDays: 365,
+      backfillCapDays: 1825),
+  TypeMappingEntry(
+      platform: _ios,
+      platformType: 'appleExerciseTime',
+      vitalKey: VitalKey.exerciseMinutes,
+      unitPlatform: 'min',
+      backfillClass: BackfillClass.dailySum,
+      backfillDefaultDays: 365,
+      backfillCapDays: 1825),
   // --- Health Connect (record names) ---
   TypeMappingEntry(
       platform: _hc,
@@ -369,7 +418,69 @@ const _v1Entries = <TypeMappingEntry>[
       unitPlatform: 'stage',
       backfillClass: BackfillClass.discrete,
       backfillDefaultDays: 365),
+  // Daily totals on Health Connect: placeholders only (`importSupported: false`),
+  // the Android implementation is a later package (P9). They keep the keys and
+  // the intended record names in one place and are never imported.
+  TypeMappingEntry(
+      platform: _hc,
+      platformType: 'StepsRecord',
+      vitalKey: VitalKey.steps,
+      unitPlatform: 'count',
+      backfillClass: BackfillClass.dailySum,
+      backfillDefaultDays: 365,
+      backfillCapDays: 1825,
+      importSupported: false),
+  TypeMappingEntry(
+      platform: _hc,
+      platformType: 'DistanceRecord',
+      vitalKey: VitalKey.walkingRunningDistance,
+      unitPlatform: 'm',
+      backfillClass: BackfillClass.dailySum,
+      backfillDefaultDays: 365,
+      backfillCapDays: 1825,
+      importSupported: false),
+  TypeMappingEntry(
+      platform: _hc,
+      platformType: 'ActiveCaloriesBurnedRecord',
+      vitalKey: VitalKey.activeEnergy,
+      unitPlatform: 'kcal',
+      backfillClass: BackfillClass.dailySum,
+      backfillDefaultDays: 365,
+      backfillCapDays: 1825,
+      importSupported: false),
+  TypeMappingEntry(
+      platform: _hc,
+      platformType: 'FloorsClimbedRecord',
+      vitalKey: VitalKey.flightsClimbed,
+      unitPlatform: 'count',
+      backfillClass: BackfillClass.dailySum,
+      backfillDefaultDays: 365,
+      backfillCapDays: 1825,
+      importSupported: false),
 ];
 
 /// Keys without a Health Connect counterpart.
-const healthKitOnlyKeys = <VitalKey>{VitalKey.hrvSdnn, VitalKey.waistCircumference};
+const healthKitOnlyKeys = <VitalKey>{
+  VitalKey.hrvSdnn,
+  VitalKey.waistCircumference,
+  VitalKey.exerciseMinutes,
+};
+
+/// Daily-total keys (`BackfillClass.dailySum`). Health Connect has only
+/// non-importable placeholders for them until the Android package (P9).
+const dailyActivityKeys = <VitalKey>{
+  VitalKey.steps,
+  VitalKey.walkingRunningDistance,
+  VitalKey.activeEnergy,
+  VitalKey.flightsClimbed,
+  VitalKey.exerciseMinutes,
+};
+
+/// HealthKit platform types of the daily totals, in display order.
+const activityPlatformTypes = <String>[
+  'stepCount',
+  'distanceWalkingRunning',
+  'activeEnergyBurned',
+  'flightsClimbed',
+  'appleExerciseTime',
+];

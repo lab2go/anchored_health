@@ -45,7 +45,25 @@ enum VitalKey {
   /// One sleep analysis interval. Value = stage code (HealthKit numbering of
   /// HKCategoryValueSleepAnalysis): 0 in bed, 1 asleep (unspecified),
   /// 2 awake, 3 core, 4 deep, 5 REM. Start/end carry the interval.
-  sleepStage('Sleep stage', 'stage', null);
+  sleepStage('Sleep stage', 'stage', null),
+
+  // --- Daily totals (0.3.0, read only, one sum per local calendar day) ---
+
+  /// Steps per day (HealthKit `stepCount`, cumulative sum over all sources).
+  steps('Steps', 'count', '55423-8'),
+
+  /// Walking and running distance per day, in meters.
+  walkingRunningDistance('Distance (walking/running)', 'm', null),
+
+  /// Active energy per day (HealthKit `activeEnergyBurned`), in kcal. The
+  /// server type is "burned calories" (shown as "Active energy").
+  activeEnergy('Active energy', 'kcal', null),
+
+  /// Flights of stairs climbed per day.
+  flightsClimbed('Flights climbed', 'count', null),
+
+  /// Apple exercise time per day, in minutes.
+  exerciseMinutes('Exercise time', 'min', null);
 
   const VitalKey(this.label, this.canonicalUnit, this.loinc);
 
@@ -60,7 +78,12 @@ enum VitalKey {
 }
 
 /// How a type is backfilled.
-enum BackfillClass { discrete, series, aggregate }
+///
+/// [dailySum]: one cumulative sum per local calendar day (steps, distance,
+/// active energy, flights, exercise minutes). Read with `ActivityDailySync` /
+/// `ActivityDailyReader`, never through `HealthSyncEngine.syncNow` (that would
+/// upload single samples).
+enum BackfillClass { discrete, series, aggregate, dailySum }
 
 /// Recording method of a value.
 enum RecordingMethod { automatic, manual, active, unknown }

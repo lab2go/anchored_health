@@ -1,3 +1,14 @@
+## 0.3.0 (draft, no tag)
+
+- Daily activity totals (read only): `stepCount`, `distanceWalkingRunning`
+  (m), `activeEnergyBurned` (kcal), `flightsClimbed`, `appleExerciseTime`
+  (min). New calls `dailyTotals` (`HKStatisticsCollectionQuery`,
+  `cumulativeSum`, local day boundaries of the device, 23/25-hour days; days
+  without data are not returned, never 0; overlapping sources such as iPhone
+  and Apple Watch are merged by HealthKit, never split by source) and
+  `sampleRefs` (anchored query returning only UUID/start/end and deleted UUIDs).
+- Swift: `ActivityDayGrid` (Foundation only) with tests `ActivityDailyTests`.
+
 ## 0.2.0 (draft, no tag)
 
 - Sleep analysis intervals and stage codes; 365-day initial window.

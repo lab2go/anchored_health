@@ -23,6 +23,34 @@ enum HealthDataType: String, CaseIterable {
   /// value: 0 inBed, 1 asleepUnspecified, 2 awake, 3 asleepCore, 4 asleepDeep,
   /// 5 asleepREM. One sample per interval; never written.
   case sleepAnalysis
+  // Read only, cumulative daily totals (HKStatisticsCollectionQuery). The
+  // single samples are only used as references to find the days a change
+  // touches, see `ActivityDayGrid` and `AnchoredHealthNative.dailyTotals`.
+  case stepCount
+  case distanceWalkingRunning
+  case activeEnergyBurned
+  case flightsClimbed
+  case appleExerciseTime
+
+  /// Cumulative activity types: delivered as daily totals, read only.
+  var isCumulativeActivity: Bool {
+    switch self {
+    case .stepCount, .distanceWalkingRunning, .activeEnergyBurned, .flightsClimbed,
+      .appleExerciseTime:
+      return true
+    default:
+      return false
+    }
+  }
+
+  /// Options of the daily statistics: the cumulative sum over all sources.
+  /// HealthKit merges overlapping sources (iPhone and Apple Watch) in this
+  /// mode by the user's source order, so the same steps are not counted twice.
+  /// `.separateBySource` is deliberately never used: it would hand the
+  /// duplicates back.
+  var dailyStatisticsOptions: HKStatisticsOptions? {
+    isCumulativeActivity ? [.cumulativeSum] : nil
+  }
 
   /// Category type; nil for quantity and correlation types.
   var categoryIdentifier: HKCategoryTypeIdentifier? {
@@ -48,6 +76,11 @@ enum HealthDataType: String, CaseIterable {
     case .bodyFatPercentage: return .bodyFatPercentage
     case .waistCircumference: return .waistCircumference
     case .vo2Max: return .vo2Max
+    case .stepCount: return .stepCount
+    case .distanceWalkingRunning: return .distanceWalkingRunning
+    case .activeEnergyBurned: return .activeEnergyBurned
+    case .flightsClimbed: return .flightsClimbed
+    case .appleExerciseTime: return .appleExerciseTime
     }
   }
 
@@ -69,6 +102,10 @@ enum HealthDataType: String, CaseIterable {
         .unitDivided(by: HKUnit.gramUnit(with: .kilo))
         .unitDivided(by: HKUnit.minute())
     case .sleepAnalysis: return .count()
+    case .stepCount, .flightsClimbed: return .count()
+    case .distanceWalkingRunning: return .meter()
+    case .activeEnergyBurned: return .kilocalorie()
+    case .appleExerciseTime: return .minute()
     }
   }
 
@@ -78,6 +115,11 @@ enum HealthDataType: String, CaseIterable {
     switch self {
     case .vo2Max: return "ml/kg/min"
     case .sleepAnalysis: return "stage"
+    // Canonical units of the daily totals (count, m, kcal, min).
+    case .stepCount, .flightsClimbed: return "count"
+    case .distanceWalkingRunning: return "m"
+    case .activeEnergyBurned: return "kcal"
+    case .appleExerciseTime: return "min"
     default: return unit.unitString
     }
   }

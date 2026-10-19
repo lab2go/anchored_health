@@ -154,6 +154,117 @@ public final class AnchoredHealthNative {
     }
   }
 
+  // MARK: Daily totals of cumulative activity types
+
+  private func cumulativeType(_ raw: String) throws -> HealthDataType {
+    let type = try HealthDataType.parse(raw)
+    guard type.isCumulativeActivity else {
+      throw PigeonError(
+        code: "invalid_argument", message: "Not a cumulative activity type: \(raw)", details: nil)
+    }
+    return type
+  }
+
+  /// Daily totals with local day boundaries of the device. Days without any
+  /// sample are not returned (no data is not 0). Queries the statistics over
+  /// all sources, so HealthKit already merges iPhone and Apple Watch.
+  func dailyTotals(
+    _ request: HkDailyTotalsRequest,
+    completion: @escaping (Result<HkDailyTotalsResult, Error>) -> Void
+  ) {
+    do {
+      try ensureAvailable()
+      let type = try cumulativeType(request.type)
+      guard let identifier = type.quantityIdentifier, let options = type.dailyStatisticsOptions else {
+        throw PigeonError(code: "invalid_argument", message: "No statistics for \(request.type)", details: nil)
+      }
+      let grid = ActivityDayGrid(timeZone: .current)
+      let days: [ActivityDay]
+      do {
+        days = try grid.days(fromDay: request.fromDay, toDay: request.toDay)
+      } catch {
+        throw PigeonError(
+          code: "invalid_argument", message: "Invalid day range: \(error)", details: nil)
+      }
+      guard let anchor = grid.anchorDate(for: days), let first = days.first, let last = days.last else {
+        throw PigeonError(code: "invalid_argument", message: "Empty day range", details: nil)
+      }
+      let unit = type.unit
+      let query = HKStatisticsCollectionQuery(
+        quantityType: HKQuantityType(identifier), quantitySamplePredicate: nil, options: options,
+        anchorDate: anchor, intervalComponents: DateComponents(day: 1))
+      query.initialResultsHandler = { _, collection, error in
+        if let error = error { return Self.onMain(completion, .failure(Self.wrap(error))) }
+        var out: [HkDailyTotal] = []
+        var misaligned: String?
+        collection?.enumerateStatistics(from: first.start, to: last.end) { stat, _ in
+          guard let sum = stat.sumQuantity() else { return }
+          guard let day = grid.alignedDay(start: stat.startDate, end: stat.endDate) else {
+            misaligned = grid.label(of: stat.startDate)
+            return
+          }
+          out.append(
+            HkDailyTotal(
+              day: day.label, value: sum.doubleValue(for: unit),
+              startMs: HealthCodec.millis(day.start), endMs: HealthCodec.millis(day.end)))
+        }
+        if let m = misaligned {
+          return Self.onMain(
+            completion,
+            .failure(
+              PigeonError(
+                code: "interval_misaligned",
+                message: "Statistics interval is not a calendar day: \(m)", details: nil)))
+        }
+        Self.onMain(
+          completion,
+          .success(HkDailyTotalsResult(days: out, timeZoneId: grid.timeZoneId)))
+      }
+      store.execute(query)
+    } catch {
+      completion(.failure(Self.wrap(error)))
+    }
+  }
+
+  /// Sample references (UUID, start, end) and deleted UUIDs since an anchor,
+  /// without values, sources or metadata.
+  func sampleRefs(
+    _ request: HkSampleRefsRequest,
+    completion: @escaping (Result<HkSampleRefsResult, Error>) -> Void
+  ) {
+    do {
+      try ensureAvailable()
+      let type = try cumulativeType(request.type)
+      let anchor = try HealthCodec.decodeAnchor(request.anchor)
+      guard request.limit >= 0 else {
+        throw PigeonError(code: "invalid_argument", message: "limit < 0", details: nil)
+      }
+      let predicate = HealthCodec.windowPredicate(fromMs: request.fromMs, toMs: request.toMs)
+      let limit = request.limit == 0 ? HKObjectQueryNoLimit : Int(request.limit)
+      let query = HKAnchoredObjectQuery(
+        type: type.sampleType, predicate: predicate, anchor: anchor, limit: limit
+      ) { _, samples, deleted, newAnchor, error in
+        if let error = error { return Self.onMain(completion, .failure(Self.wrap(error))) }
+        do {
+          let refs = (samples ?? []).map {
+            HkSampleRef(
+              uuid: $0.uuid.uuidString, startMs: HealthCodec.millis($0.startDate),
+              endMs: HealthCodec.millis($0.endDate))
+          }
+          let result = HkSampleRefsResult(
+            refs: refs, deletedUuids: (deleted ?? []).map { $0.uuid.uuidString },
+            nextAnchor: try newAnchor.map(HealthCodec.encodeAnchor))
+          Self.onMain(completion, .success(result))
+        } catch {
+          Self.onMain(completion, .failure(Self.wrap(error)))
+        }
+      }
+      store.execute(query)
+    } catch {
+      completion(.failure(Self.wrap(error)))
+    }
+  }
+
   // MARK: Writing / deleting
 
   func save(_ requests: [HkSaveRequest], completion: @escaping (Result<[String], Error>) -> Void) {

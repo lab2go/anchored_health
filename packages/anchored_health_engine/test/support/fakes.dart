@@ -224,6 +224,11 @@ const vitalIds = <VitalKey, String>{
   VitalKey.bodyFatPercentage: 'vt-fat',
   VitalKey.waistCircumference: 'vt-waist',
   VitalKey.sleepStage: 'vt-sleep',
+  VitalKey.steps: 'vt-steps',
+  VitalKey.walkingRunningDistance: 'vt-distance',
+  VitalKey.activeEnergy: 'vt-energy',
+  VitalKey.flightsClimbed: 'vt-flights',
+  VitalKey.exerciseMinutes: 'vt-exercise',
 };
 
 TypeCatalog testCatalog() => TypeCatalog.v1Default().withVitalTypeIds(vitalIds);

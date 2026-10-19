@@ -48,6 +48,18 @@ final class AnchoredHealthApiImpl: AnchoredHealthApi {
     native.anchoredQuery(request, completion: completion)
   }
 
+  func dailyTotals(
+    request: HkDailyTotalsRequest, completion: @escaping (Result<HkDailyTotalsResult, Error>) -> Void
+  ) {
+    native.dailyTotals(request, completion: completion)
+  }
+
+  func sampleRefs(
+    request: HkSampleRefsRequest, completion: @escaping (Result<HkSampleRefsResult, Error>) -> Void
+  ) {
+    native.sampleRefs(request, completion: completion)
+  }
+
   func save(samples: [HkSaveRequest], completion: @escaping (Result<[String], Error>) -> Void) {
     native.save(samples, completion: completion)
   }

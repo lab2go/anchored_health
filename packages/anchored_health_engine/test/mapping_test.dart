@@ -14,7 +14,7 @@ void main() {
         final keys = catalog.entries.where((e) => e.platform == p && e.importSupported).map((e) => e.vitalKey).toSet();
         final want = p == HealthPlatform.appleHealth
             ? VitalKey.values.toSet()
-            : VitalKey.values.toSet().difference(healthKitOnlyKeys);
+            : VitalKey.values.toSet().difference(healthKitOnlyKeys).difference(dailyActivityKeys);
         expect(keys, want, reason: p.id);
       }
     });

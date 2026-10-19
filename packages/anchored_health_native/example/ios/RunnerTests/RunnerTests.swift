@@ -32,7 +32,7 @@ class RunnerTests: XCTestCase {
       XCTAssertFalse(t.unitString.isEmpty)
       XCTAssertNotNil(t.sampleType)
     }
-    XCTAssertThrowsError(try HealthDataType.parse("stepCount"))
+    XCTAssertThrowsError(try HealthDataType.parse("notAType"))
   }
 
   func testUnits() {

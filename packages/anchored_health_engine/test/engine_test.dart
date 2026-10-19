@@ -149,9 +149,9 @@ void main() {
     test('partial success: unknown type => partial, rest runs', () async {
       final h = EngineHarness();
       h.bridge.add(sample(id: 'w1'));
-      final r = await h.sync({'bodyMass', 'stepCount'});
+      final r = await h.sync({'bodyMass', 'notAType'});
       expect(r.outcome, SyncOutcome.partial);
-      expect(r.failedTypes, ['stepCount']);
+      expect(r.failedTypes, ['notAType']);
       expect(r['imported'], 1);
     });
 

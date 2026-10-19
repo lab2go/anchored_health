@@ -3,12 +3,30 @@ import 'package:anchored_health_engine/anchored_health_engine.dart';
 import 'package:anchored_health_engine/native_bridge.dart';
 import 'package:anchored_health_native/anchored_health_native.dart';
 
+import 'support/fakes.dart' show testCatalog;
+
 /// Pigeon fake: no platform channels, synthetic values.
 class FakeApi extends AnchoredHealthApi {
   final requests = <HkAnchoredQueryRequest>[];
   final saved = <HkSaveRequest>[];
   List<HkAnchoredQueryResult> pages = [];
   List<Object?> lastAuth = [];
+  final dailyRequests = <HkDailyTotalsRequest>[];
+  final refRequests = <HkSampleRefsRequest>[];
+  HkDailyTotalsResult dailyResult = HkDailyTotalsResult(days: [], timeZoneId: '');
+  List<HkSampleRefsResult> refPages = [];
+
+  @override
+  Future<HkDailyTotalsResult> dailyTotals(HkDailyTotalsRequest request) async {
+    dailyRequests.add(request);
+    return dailyResult;
+  }
+
+  @override
+  Future<HkSampleRefsResult> sampleRefs(HkSampleRefsRequest request) async {
+    refRequests.add(request);
+    return refPages.isEmpty ? HkSampleRefsResult(refs: [], deletedUuids: [], nextAnchor: request.anchor) : refPages.removeAt(0);
+  }
 
   @override
   Future<HkAnchoredQueryResult> anchoredQuery(HkAnchoredQueryRequest request) async {
@@ -205,4 +223,83 @@ void main() {
     expect(() => n.anchoredQuery(type: 'bodyMass'), throwsA(isA<HealthPlatformUnsupported>()));
     expect(() => n.save(const []), throwsA(isA<UnsupportedError>()));
   });
+
+  test('dailyTotals: day labels pass through, junk labels are ignored, zone is reported', () async {
+    final api = FakeApi()
+      ..dailyResult = HkDailyTotalsResult(timeZoneId: 'Europe/Berlin', days: [
+        HkDailyTotal(day: '2026-03-28', value: 8000, startMs: 1, endMs: 2),
+        HkDailyTotal(day: '2026-03-29', value: 7000.5, startMs: 2, endMs: 3),
+        HkDailyTotal(day: 'garbage', value: 1, startMs: 3, endMs: 4),
+      ]);
+    final bridge = NativeHealthBridge(native: AnchoredHealthNative(api: api, isSupportedPlatform: true));
+    final page = await bridge.dailyTotals('stepCount', from: LocalDay.parse('2026-03-28'), to: LocalDay.parse('2026-03-30'));
+    expect((api.dailyRequests.single.type, api.dailyRequests.single.fromDay, api.dailyRequests.single.toDay),
+        ('stepCount', '2026-03-28', '2026-03-30'));
+    expect(page.days.map((d) => (d.day.iso, d.value)), [('2026-03-28', 8000.0), ('2026-03-29', 7000.5)]);
+    expect(page.timeZoneId, 'Europe/Berlin');
+    api.dailyResult = HkDailyTotalsResult(days: [], timeZoneId: '');
+    expect((await bridge.dailyTotals('stepCount', from: LocalDay.parse('2026-03-28'), to: LocalDay.parse('2026-03-28'))).timeZoneId, isNull);
+  });
+
+  test('sampleRefs: UTC instants, deleted UUIDs, anchor kept when nothing new, hasMore on a full page', () async {
+    final api = FakeApi()
+      ..refPages = [
+        HkSampleRefsResult(
+            refs: [HkSampleRef(uuid: 'U1', startMs: 1000, endMs: 2000), HkSampleRef(uuid: 'U2', startMs: 3000, endMs: 3000)],
+            deletedUuids: ['D1'],
+            nextAnchor: 'A2'),
+        HkSampleRefsResult(refs: [], deletedUuids: [], nextAnchor: null),
+      ];
+    final bridge = NativeHealthBridge(native: AnchoredHealthNative(api: api, isSupportedPlatform: true));
+    final p1 = await bridge.sampleRefs('stepCount', anchor: 'A1', limit: 2, from: DateTime.utc(2026, 9, 1));
+    expect(api.refRequests.single.anchor, 'A1');
+    expect(api.refRequests.single.fromMs, DateTime.utc(2026, 9, 1).millisecondsSinceEpoch);
+    expect(p1.refs.map((r) => r.uuid), ['U1', 'U2']);
+    expect(p1.refs.first.start, DateTime.fromMillisecondsSinceEpoch(1000, isUtc: true));
+    expect(p1.deletedUuids, ['D1']);
+    expect(p1.hasMore, isTrue);
+    expect(p1.nextAnchor, 'A2');
+    final p2 = await bridge.sampleRefs('stepCount', anchor: 'A2', limit: 2);
+    expect(p2.hasMore, isFalse);
+    expect(p2.nextAnchor, 'A2', reason: 'no new anchor: keep the old one');
+  });
+
+  test('the native bridge feeds ActivityDailySync end to end (fake Pigeon API)', () async {
+    final api = FakeApi()
+      ..dailyResult = HkDailyTotalsResult(timeZoneId: 'Europe/Berlin', days: [
+        HkDailyTotal(day: '2026-10-18', value: 4321, startMs: 1, endMs: 2),
+      ])
+      ..refPages = [
+        HkSampleRefsResult(refs: [HkSampleRef(uuid: 'U1', startMs: 1, endMs: 2)], deletedUuids: [], nextAnchor: 'A1')
+      ];
+    final bridge = NativeHealthBridge(native: AnchoredHealthNative(api: api, isSupportedPlatform: true));
+    final sent = <ActivityIngestElement>[];
+    final sync = ActivityDailySync(
+      bridge: bridge,
+      catalog: testCatalog(),
+      state: SyncStateStore(InMemoryKeyValueStore()),
+      uploader: _Collect(sent),
+      session: const FixedSession('u', 'p'),
+      clock: () => DateTime.now(),
+    );
+    final link = const HealthLink(linkId: 'l', userId: 'u', profileId: 'p', platform: HealthPlatform.appleHealth);
+    final r = await sync.syncNow(link, types: {'stepCount'}, lookbackDays: 1825);
+    expect(r.outcome, SyncOutcome.success);
+    expect(api.dailyRequests.single.type, 'stepCount');
+    expect(api.refRequests.first.anchor, isNull);
+    expect(api.refRequests.first.fromMs, isNotNull, reason: 'the first run only indexes the recent window');
+    expect(api.refRequests.first.limit, 5000);
+    expect(sent.single.day.iso, '2026-10-18');
+    expect(sent.single.valueNumeric, 4321);
+  });
+}
+
+class _Collect implements ActivityDailyUploader {
+  _Collect(this.sent);
+  final List<ActivityIngestElement> sent;
+  @override
+  Future<ActivityIngestResult> ingestDaily(String linkId, List<ActivityIngestElement> days) async {
+    sent.addAll(days);
+    return const ActivityIngestResult();
+  }
 }

@@ -66,6 +66,70 @@ Times in UTC to the second (`2026-09-01T08:00:05Z`), numbers with at most 6
 decimals without trailing zeros, `null` as empty text. A server that recomputes
 the hash must use exactly this format.
 
+## Daily activity totals (0.3.0, read only)
+
+Steps, walking/running distance, active energy, flights climbed and exercise
+minutes are not single readings but **one sum per local calendar day**. They
+use their own path next to `HealthSyncEngine` (`syncNow` skips these types, it
+would otherwise upload single samples):
+
+| Platform type (HealthKit) | `VitalKey` | Canonical unit |
+|---|---|---|
+| `stepCount` | `steps` | `count` |
+| `distanceWalkingRunning` | `walkingRunningDistance` | `m` |
+| `activeEnergyBurned` | `activeEnergy` | `kcal` |
+| `flightsClimbed` | `flightsClimbed` | `count` |
+| `appleExerciseTime` | `exerciseMinutes` | `min` |
+
+* **Native (iOS):** `HKStatisticsCollectionQuery` with `cumulativeSum` over all
+  sources and local midnight of the device as day boundary (23 and 25 hour days
+  are single days). HealthKit itself merges overlapping sources (iPhone and
+  Apple Watch); the plugin never splits by source and never adds per-device
+  values up. A day without data is missing, never 0.
+* **Read:** `ActivityDailyReader.readDailyTotals(type, lookbackDays: 365)`
+  (default 365, at most 1825 days, today included; `complete` is `false` for
+  today).
+* **Sync:** `ActivityDailySync.syncNow(link, types: {...})` finds the touched
+  days with an anchored reference query (only UUID/start/end), reads exactly
+  those days, compares with the last accepted value and uploads changes through
+  `ActivityDailyUploader.ingestDaily` (app: RPC `health_ingest_daily`). The anchor
+  is stored only after all batches of a type succeeded.
+* **Changes and deletions:** a local index (UUID -> days of the last 35 days,
+  monthly shards under `<uid>/<pid>/<platform>/activity/idx/...`) tells which
+  days a deletion touches; an unknown UUID recomputes the whole look-back. A
+  late sample (old start, new insertion) recomputes its old day. An empty read
+  **never** deletes anything and is never sent as 0: days that lost all data
+  are only reported (`ActivitySyncResult.emptiedDays`).
+* **Contract of the server** (`health_ingest_daily`): one merged sum per type
+  and day under one fixed `source_package`
+  (`ActivityDailyConfig.sourcePackage`, never change it for an existing
+  profile), no `external_version`, no `deleted` (tombstones only on an explicit
+  user request, never created by the engine), batches of one type and a limited
+  period (<= 2000 elements, <= 45 days per batch, newest first). The answer's
+  `timezone_id` is stored; when it changes the whole look-back is sent again.
+* **Revocation:** `ActivityDailySync.forget(scope)` removes anchors, sent values
+  and the index of a connection (`SyncStateStore.resetUser` does it too). The
+  server is not touched.
+* **Android:** placeholder only (`UnsupportedActivityDailyBridge`, catalog
+  entries with `importSupported: false`); Health Connect follows in a later
+  package.
+
+```dart
+final sync = ActivityDailySync(
+  bridge: nativeBridge,                       // NativeHealthBridge implements ActivityDailyBridge
+  catalog: catalog,                           // withVitalTypeIds(...) for the five daily types
+  state: SyncStateStore(myKeyValueStore),
+  uploader: myDailyUploader,                  // rpc('health_ingest_daily', {p_link_id, p_days, p_run_id})
+  session: mySession,
+);
+final r = await sync.syncNow(link, types: activityPlatformTypes.toSet());
+```
+
+Read permission: the app requests the five platform types in `read` of
+`requestAuthorization` (read only, nothing is written). Info.plist needs no extra
+key per type: the existing `NSHealthShareUsageDescription` must name the
+activity values.
+
 ## App-specific configuration
 
 Nothing app-specific is hard-coded. The defaults are neutral placeholders; an

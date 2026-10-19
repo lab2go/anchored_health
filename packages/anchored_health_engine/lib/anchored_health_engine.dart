@@ -6,6 +6,11 @@
 /// No assessment of values (no status, zones or reference ranges).
 library;
 
+export 'src/activity/activity_bridge.dart';
+export 'src/activity/activity_daily.dart';
+export 'src/activity/activity_ingest.dart';
+export 'src/activity/activity_state.dart';
+export 'src/activity/local_day.dart';
 export 'src/bridge/health_bridge.dart';
 export 'src/engine/health_sync_engine.dart';
 export 'src/mapping/type_catalog.dart';

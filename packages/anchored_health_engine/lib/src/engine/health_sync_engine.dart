@@ -164,7 +164,13 @@ class HealthSyncEngine {
     final result = SyncRunResult(SyncOutcome.success, counters: run.c, failedTypes: failed);
     try {
       for (final type in types) {
-        final entries = catalog.forPlatformType(link.platform, type).where((e) => e.importSupported).toList();
+        final all = catalog.forPlatformType(link.platform, type).where((e) => e.importSupported).toList();
+        // Daily totals are read by ActivityDailySync (one sum per day), never as single samples.
+        if (all.isNotEmpty && all.every((e) => e.backfillClass == BackfillClass.dailySum)) {
+          run.add('daily_sum_skipped');
+          continue;
+        }
+        final entries = all.where((e) => e.backfillClass != BackfillClass.dailySum).toList();
         if (entries.isEmpty) {
           failed.add(type);
           run.add('unsupported_types');
@@ -336,7 +342,10 @@ class HealthSyncEngine {
   }) async {
     if (!_sessionMatches(link)) return SyncRunResult(SyncOutcome.sessionMismatch);
     final scope = link.scope;
-    final entries = catalog.forPlatformType(link.platform, type).where((e) => e.importSupported).toList();
+    final entries = catalog
+        .forPlatformType(link.platform, type)
+        .where((e) => e.importSupported && e.backfillClass != BackfillClass.dailySum)
+        .toList();
     if (entries.isEmpty) return SyncRunResult(SyncOutcome.error, failedTypes: [type]);
     if (!await state.acquireRunLock(scope, _clock(), timeout: config.runLockTimeout)) {
       return SyncRunResult(SyncOutcome.locked);
