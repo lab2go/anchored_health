@@ -55,17 +55,35 @@ HkSample bpSample() => HkSample(
     );
 
 void main() {
-  test('HKTimeZone: IANA names pass, GMT/UTC offsets and junk become null', () {
+  test('HKTimeZone: IANA names pass, offsets are normalised to GMT+-hh:mm, junk becomes null', () {
     for (final ok in ['Europe/Berlin', 'UTC', 'GMT', 'America/Argentina/Buenos_Aires', 'Etc/GMT+2']) {
       expect(NativeHealthBridge.sanitizeTimeZoneId(ok), ok, reason: ok);
     }
-    for (final bad in ['GMT+02:00', 'GMT+01:00', 'UTC-0530', '', '  ', 'Mars/Olympus Mons', 'x' * 65, 42, null]) {
+    const normalised = {
+      'GMT+02:00': 'GMT+02:00',
+      'GMT+01:00': 'GMT+01:00',
+      'GMT-04:00': 'GMT-04:00',
+      'GMT+2': 'GMT+02:00',
+      'GMT+0200': 'GMT+02:00',
+      'UTC-0530': 'GMT-05:30',
+      'UTC+05:30': 'GMT+05:30',
+      'GMT+14:00': 'GMT+14:00',
+      'GMT+00:00': 'GMT+00:00',
+      ' GMT+02:00 ': 'GMT+02:00',
+    };
+    normalised.forEach((raw, want) {
+      expect(NativeHealthBridge.sanitizeTimeZoneId(raw), want, reason: raw);
+    });
+    for (final bad in [
+      'GMT+15:00', 'GMT+99', 'GMT+02:60', 'GMT+', 'GMT+02:0', 'GMT+020000', 'UTC+1:2:3',
+      '', '  ', 'Mars/Olympus Mons', 'x' * 65, 42, null
+    ]) {
       expect(NativeHealthBridge.sanitizeTimeZoneId(bad), isNull, reason: '$bad');
     }
     final s = NativeHealthBridge.sampleFromNative(HkSample(
         uuid: 'TZ-1', type: 'sleepAnalysis', startMs: 0, endMs: 60000, value: 3, unit: 'stage',
-        source: HkSource(bundleId: 'com.example.ring', name: 'Ring'), metadata: {'HKTimeZone': 'GMT+02:00'}));
-    expect(s.timeZoneId, isNull);
+        source: HkSource(bundleId: 'com.example.ring', name: 'Ring'), metadata: {'HKTimeZone': 'GMT-04:00'}));
+    expect(s.timeZoneId, 'GMT-04:00');
   });
 
   test('Pigeon sample -> engine sample: correlation, device, metadata', () {

@@ -46,17 +46,35 @@ enum HealthCodec {
 
   // MARK: Reading metadata
 
-  /// HKTimeZone of foreign sources: only a real IANA name is passed on. Foundation also accepts
-  /// offset spellings such as "GMT+02:00", which PostgreSQL reads as POSIX zones with the opposite sign.
+  /// HKTimeZone of foreign sources: a real IANA name is passed on as is. Offset spellings such as
+  /// "GMT+02:00" / "UTC-0530" are kept and written as one canonical "GMT±hh:mm" (east positive, the way the
+  /// server reads them); dropping them would shift night sleep to the wrong day without any hint.
+  /// Impossible offsets (more than 14 h, 60+ minutes), empty or overlong values and unknown names give nil.
   static func sanitizedTimeZone(_ raw: String) -> String? {
     let t = raw.trimmingCharacters(in: .whitespaces)
-    guard !t.isEmpty, t.count <= 64, TimeZone(identifier: t) != nil else { return nil }
+    guard !t.isEmpty, t.count <= 64 else { return nil }
+    let offsetPattern = "^(?:GMT|UTC)([+-])([0-9]{1,2})(?::?([0-9]{2}))?$"
+    if let re = try? NSRegularExpression(pattern: offsetPattern),
+      let m = re.firstMatch(in: t, range: NSRange(t.startIndex..., in: t)),
+      let signR = Range(m.range(at: 1), in: t), let hR = Range(m.range(at: 2), in: t),
+      let h = Int(t[hR])
+    {
+      var minutes = 0
+      if m.range(at: 3).location != NSNotFound, let mR = Range(m.range(at: 3), in: t),
+        let mi = Int(t[mR])
+      {
+        minutes = mi
+      }
+      guard h <= 14, minutes < 60 else { return nil }
+      return String(format: "GMT%@%02d:%02d", String(t[signR]), h, minutes)
+    }
+    guard TimeZone(identifier: t) != nil else { return nil }
     if t.range(of: "^(GMT|UTC)[+-]", options: .regularExpression) != nil { return nil }
     return t
   }
 
   /// HK metadata to Pigeon-compatible values: bool/number/string stay, date -> ms, rest -> text.
-  /// HKTimeZone is dropped unless it is a real IANA name (see `sanitizedTimeZone`).
+  /// HKTimeZone is kept as IANA name or canonical offset, otherwise dropped (see `sanitizedTimeZone`).
   static func metadataToPigeon(_ metadata: [String: Any]?) -> [String?: Any?] {
     var out: [String?: Any?] = [:]
     guard let metadata = metadata else { return out }

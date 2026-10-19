@@ -190,13 +190,22 @@ class NativeHealthBridge implements HealthBridge {
   }
 
   /// HKTimeZone of foreign sources is free text. Offset spellings such as
-  /// `GMT+02:00` are not IANA names (PostgreSQL would read them as POSIX
-  /// zones with the opposite sign), empty or overlong values are useless:
-  /// both become null (the record then has no time zone).
+  /// `GMT+02:00` / `UTC-0530` are kept (the server reads them as fixed
+  /// offsets, east positive) and written in one canonical form `GMT±hh:mm`;
+  /// dropping them would move night sleep to the wrong day without any hint.
+  /// Impossible offsets (more than 14 h, 60+ minutes), empty or overlong
+  /// values and anything that is not an IANA-looking name become null.
   static String? sanitizeTimeZoneId(Object? raw) {
     if (raw is! String) return null;
     final t = raw.trim();
     if (t.isEmpty || t.length > 64) return null;
+    final off = RegExp(r'^(?:GMT|UTC)([+-])([0-9]{1,2})(?::?([0-9]{2}))?$').firstMatch(t);
+    if (off != null) {
+      final h = int.parse(off.group(2)!);
+      final m = int.parse(off.group(3) ?? '0');
+      if (h > 14 || m >= 60) return null;
+      return 'GMT${off.group(1)}${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}';
+    }
     if (RegExp(r'^(GMT|UTC)[+-]').hasMatch(t)) return null;
     if (!RegExp(r'^[A-Za-z][A-Za-z0-9_+\-]*(/[A-Za-z0-9_+\-]+)*$').hasMatch(t)) return null;
     return t;

@@ -103,16 +103,23 @@ class RunnerTests: XCTestCase {
     XCTAssertThrowsError(try HealthCodec.makeSample(q, type: .sleepAnalysis, source: fakeSource))
   }
 
-  func testTimeZoneMetadataOnlyIana() {
+  func testTimeZoneMetadataIanaAndNormalisedOffsets() {
     XCTAssertEqual(HealthCodec.sanitizedTimeZone("Europe/Berlin"), "Europe/Berlin")
     XCTAssertEqual(HealthCodec.sanitizedTimeZone("UTC"), "UTC")
-    XCTAssertNil(HealthCodec.sanitizedTimeZone("GMT+02:00"))
-    XCTAssertNil(HealthCodec.sanitizedTimeZone("UTC-05:30"))
+    XCTAssertEqual(HealthCodec.sanitizedTimeZone("GMT+02:00"), "GMT+02:00")
+    XCTAssertEqual(HealthCodec.sanitizedTimeZone("GMT-04:00"), "GMT-04:00")
+    XCTAssertEqual(HealthCodec.sanitizedTimeZone("GMT+2"), "GMT+02:00")
+    XCTAssertEqual(HealthCodec.sanitizedTimeZone("UTC-0530"), "GMT-05:30")
+    XCTAssertEqual(HealthCodec.sanitizedTimeZone("UTC-05:30"), "GMT-05:30")
+    XCTAssertNil(HealthCodec.sanitizedTimeZone("GMT+15:00"))
+    XCTAssertNil(HealthCodec.sanitizedTimeZone("GMT+02:60"))
     XCTAssertNil(HealthCodec.sanitizedTimeZone("Mars/Olympus Mons"))
     XCTAssertNil(HealthCodec.sanitizedTimeZone(""))
     let md = HealthCodec.metadataToPigeon([HKMetadataKeyTimeZone: "GMT+01:00", "x": "y"])
-    XCTAssertNil(md[HKMetadataKeyTimeZone] ?? nil)
+    XCTAssertEqual(md[HKMetadataKeyTimeZone] as? String, "GMT+01:00")
     XCTAssertEqual(md["x"] as? String, "y")
+    let junk = HealthCodec.metadataToPigeon([HKMetadataKeyTimeZone: "Mars/Olympus Mons"])
+    XCTAssertNil(junk[HKMetadataKeyTimeZone] ?? nil)
     let ok = HealthCodec.metadataToPigeon([HKMetadataKeyTimeZone: "Europe/Berlin"])
     XCTAssertEqual(ok[HKMetadataKeyTimeZone] as? String, "Europe/Berlin")
   }
