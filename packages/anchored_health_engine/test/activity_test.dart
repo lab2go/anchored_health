@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:anchored_health_engine/anchored_health_engine.dart';
+import 'package:anchored_health_engine/file_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'support/activity_fakes.dart';
@@ -15,11 +18,13 @@ class Harness {
     ActivityDailyConfig config = const ActivityDailyConfig(),
     SessionProvider? session,
     this.timezone = 'Europe/Berlin',
+    this.activityKv,
+    InMemoryKeyValueStore? sharedKv,
   })  : clock = now ?? _now,
         store = FakeActivityStore(calendar: calendar, zone: timezone),
         uploader = FakeActivityUploader(timezoneId: timezone),
-        kv = InMemoryKeyValueStore() {
-    state = SyncStateStore(kv);
+        kv = sharedKv ?? InMemoryKeyValueStore() {
+    state = SyncStateStore(kv, activityKv: activityKv);
     sync = ActivityDailySync(
       bridge: store,
       catalog: testCatalog(),
@@ -33,6 +38,9 @@ class Harness {
   }
 
   final String timezone;
+
+  /// Separate state store (file store outside the backup), null = everything in [kv].
+  final KeyValueStore? activityKv;
   DateTime clock;
   final FakeActivityStore store;
   final FakeActivityUploader uploader;
@@ -486,7 +494,7 @@ void main() {
   });
 
   group('failures and state', () {
-    test('a failed batch leaves the anchor untouched, the next run sends everything again', () async {
+    test('a failed batch leaves the anchor untouched; accepted batches stay stored, the next run sends the rest', () async {
       final h = Harness();
       for (var i = 0; i < 100; i++) {
         h.steps(d('2026-10-19').addDays(-i).iso, 8, 100.0 + i);
@@ -495,13 +503,16 @@ void main() {
       final r1 = await h.run();
       expect(r1.outcome, SyncOutcome.error);
       expect(r1.failedTypes, [_steps]);
+      expect(r1.failureReasons[_steps], ActivityFailure.error);
       expect(await h.sync.store.anchor(h.link.scope, _steps), isNull);
-      expect(await h.sync.store.sent(h.link.scope, _steps), isEmpty);
+      expect((await h.sync.store.sent(h.link.scope, _steps)).length, 10, reason: 'the first (newest) batch was accepted');
       h.uploader.failOnCall = null;
       final r2 = await h.run();
       expect(r2.outcome, SyncOutcome.success);
       expect(h.rows.length, 100);
-      expect(r2['duplicates'], greaterThan(0), reason: 'the first batch of the failed run arrives again, harmlessly');
+      expect(r2['days_sent'], 90, reason: 'only the rest travels again');
+      expect(r2['duplicates'], 0);
+      expect(await h.sync.store.anchor(h.link.scope, _steps), isNotNull);
     });
 
     test('one type fails, the others go through', () async {
@@ -515,7 +526,7 @@ void main() {
       expect(h.rows.length, 1);
     });
 
-    test('server rejections are counted', () async {
+    test('server rejections are counted and make the type fail', () async {
       final h = Harness();
       for (var i = 0; i < 4; i++) {
         h.steps('2026-10-1$i', 8, 10);
@@ -523,6 +534,10 @@ void main() {
       h.uploader.rejectEvery = 2;
       final r = await h.run();
       expect(r['rejected'], 2);
+      expect(r.outcome, SyncOutcome.error);
+      expect(r.failureReasons[_steps], ActivityFailure.rejected);
+      expect(await h.sync.store.sent(h.link.scope, _steps), isEmpty, reason: 'which days were turned down is unknown');
+      expect(await h.sync.store.anchor(h.link.scope, _steps), isNull);
     });
 
     test('session mismatch reads and sends nothing; a held lock gives locked', () async {
@@ -584,6 +599,160 @@ void main() {
     });
   });
 
+  group('server answers (review P3 A1)', () {
+    test('turned-down days are not stored as sent: the next run after activation sends them (review R1)', () async {
+      final h = Harness();
+      for (var i = 0; i < 5; i++) {
+        h.steps(d('2026-10-18').addDays(-i).iso, 8, 1000.0 + i);
+      }
+      h.uploader.rejectAll = true; // mapping not active yet
+      final r1 = await h.run();
+      expect(r1.outcome, isNot(SyncOutcome.success));
+      expect(r1.outcome, SyncOutcome.error);
+      expect(r1.failedTypes, [_steps]);
+      expect(r1.failureReasons, {_steps: ActivityFailure.rejected});
+      expect(r1['rejected'], 5);
+      expect(await h.sync.store.anchor(h.link.scope, _steps), isNull, reason: 'anchor must not advance');
+      expect(await h.sync.store.sent(h.link.scope, _steps), isEmpty, reason: 'sent must stay empty');
+      expect(h.rows, isEmpty);
+      // still rejected, also with forceFull: nothing is committed
+      final r2 = await h.run({_steps}, true);
+      expect(r2.outcome, SyncOutcome.error);
+      expect(await h.sync.store.sent(h.link.scope, _steps), isEmpty);
+      // mapping activated: a plain run (no forceFull) sends everything
+      h.uploader.rejectAll = false;
+      final r3 = await h.run();
+      expect(r3.outcome, SyncOutcome.success);
+      expect(h.rows.length, 5);
+      expect((await h.sync.store.sent(h.link.scope, _steps)).length, 5);
+      expect(await h.sync.store.anchor(h.link.scope, _steps), isNotNull);
+    });
+
+    test('a rejected middle batch keeps the earlier ones, stops the type, and the rest follows later', () async {
+      final h = Harness();
+      for (var i = 0; i < 100; i++) {
+        h.steps(d('2026-10-19').addDays(-i).iso, 8, 100.0 + i);
+      }
+      h.uploader.rejectCall = 2;
+      final r1 = await h.run();
+      expect(r1.outcome, SyncOutcome.error);
+      expect(r1.failureReasons[_steps], ActivityFailure.rejected);
+      expect(h.uploader.calls, 2, reason: 'no more calls after a turned-down batch');
+      expect((await h.sync.store.sent(h.link.scope, _steps)).length, 10);
+      expect(await h.sync.store.anchor(h.link.scope, _steps), isNull);
+      h.uploader.rejectCall = null;
+      final r2 = await h.run();
+      expect(r2.outcome, SyncOutcome.success);
+      expect(r2['days_sent'], 90);
+      expect(h.rows.length, 100);
+    });
+
+    test('dropped echo is not an acceptance either', () async {
+      final h = Harness();
+      h.steps('2026-10-18', 8, 100);
+      h.uploader.echoAll = true;
+      final r = await h.run();
+      expect(r.outcome, SyncOutcome.error);
+      expect(r.failureReasons[_steps], ActivityFailure.echo);
+      expect(await h.sync.store.sent(h.link.scope, _steps), isEmpty);
+      expect(await h.sync.store.anchor(h.link.scope, _steps), isNull);
+    });
+
+    test('an answer whose counters do not cover the batch is not trusted', () async {
+      final h = Harness();
+      h.steps('2026-10-18', 8, 100);
+      h.steps('2026-10-17', 8, 100);
+      h.uploader.silent = true;
+      final r = await h.run();
+      expect(r.outcome, SyncOutcome.error);
+      expect(r.failureReasons[_steps], ActivityFailure.answerMismatch);
+      expect(await h.sync.store.sent(h.link.scope, _steps), isEmpty);
+    });
+
+    test('one of two types is turned down: partial, the other type is committed', () async {
+      final h = Harness();
+      h.steps('2026-10-18', 8, 5, type: 'stepCount');
+      h.steps('2026-10-18', 8, 5, type: 'flightsClimbed');
+      h.uploader.rejectCall = 1;
+      final r = await h.run({'stepCount', 'flightsClimbed'});
+      expect(r.outcome, SyncOutcome.partial);
+      expect(r.failedTypes.length, 1);
+      expect(r.failureReasons.values.single, ActivityFailure.rejected);
+      final ok = ['stepCount', 'flightsClimbed'].firstWhere((t) => !r.failedTypes.contains(t));
+      expect(await h.sync.store.anchor(h.link.scope, ok), isNotNull);
+      expect(await h.sync.store.anchor(h.link.scope, r.failedTypes.single), isNull);
+    });
+  });
+
+  group('progress and abort (review P3 A2)', () {
+    test('progress is reported before the first and after every accepted batch', () async {
+      final h = Harness();
+      for (var i = 0; i < 100; i++) {
+        h.steps(d('2026-10-19').addDays(-i).iso, 8, 100.0 + i);
+      }
+      final seen = <ActivityProgress>[];
+      final r = await h.sync.syncNow(h.link, types: {_steps}, onProgress: seen.add);
+      expect(r.outcome, SyncOutcome.success);
+      expect(seen.map((p) => p.batchesDone), [0, 1, 2, 3]);
+      expect(seen.map((p) => p.daysDone), [0, 10, 55, 100], reason: 'newest period first');
+      expect(seen.every((p) => p.batchesTotal == 3 && p.daysTotal == 100), isTrue);
+      expect(seen.every((p) => p.platformType == _steps && p.typeIndex == 0 && p.typeCount == 1), isTrue);
+    });
+
+    test('shouldStop ends the run between batches: accepted batches stay, no anchor, the next run goes on', () async {
+      final h = Harness();
+      for (var i = 0; i < 100; i++) {
+        h.steps(d('2026-10-19').addDays(-i).iso, 8, 100.0 + i);
+      }
+      final r1 = await h.sync.syncNow(h.link, types: {_steps}, shouldStop: () => h.uploader.calls >= 1);
+      expect(r1.stopped, isTrue);
+      expect(r1.outcome, SyncOutcome.partial);
+      expect(r1.incompleteTypes, [_steps]);
+      expect(r1.failedTypes, isEmpty);
+      expect(h.uploader.calls, 1);
+      expect((await h.sync.store.sent(h.link.scope, _steps)).length, 10);
+      expect(await h.sync.store.anchor(h.link.scope, _steps), isNull);
+      // the lock is free again
+      final r2 = await h.run();
+      expect(r2.outcome, SyncOutcome.success);
+      expect(r2.stopped, isFalse);
+      expect(r2['days_sent'], 90);
+      expect(h.rows.length, 100);
+    });
+
+    test('shouldStop before the first type reads and sends nothing', () async {
+      final h = Harness();
+      h.steps('2026-10-18', 8, 100);
+      final r = await h.sync.syncNow(h.link, types: {_steps, 'flightsClimbed'}, shouldStop: () => true);
+      expect(r.stopped, isTrue);
+      expect(r.incompleteTypes, [_steps, 'flightsClimbed']);
+      expect(h.store.calls, isEmpty);
+      expect(h.uploader.calls, 0);
+    });
+
+    test('stopping between two types keeps the finished one', () async {
+      final h = Harness();
+      h.steps('2026-10-18', 8, 5, type: 'stepCount');
+      h.steps('2026-10-18', 8, 5, type: 'flightsClimbed');
+      final r = await h.sync.syncNow(h.link,
+          types: {'stepCount', 'flightsClimbed'}, shouldStop: () => h.uploader.calls >= 1);
+      expect(r.stopped, isTrue);
+      expect(r.incompleteTypes, ['flightsClimbed']);
+      expect(await h.sync.store.anchor(h.link.scope, 'stepCount'), isNotNull);
+      expect(await h.sync.store.anchor(h.link.scope, 'flightsClimbed'), isNull);
+    });
+
+    test('every accepted batch renews the run lock, so a long run is not taken over as stale', () async {
+      final h = Harness();
+      final scope = h.link.scope;
+      final t0 = DateTime.utc(2026, 10, 19, 12);
+      expect(await h.state.acquireRunLock(scope, t0), isTrue);
+      await h.state.renewRunLock(scope, t0.add(const Duration(minutes: 9)));
+      expect(await h.state.acquireRunLock(scope, t0.add(const Duration(minutes: 15))), isFalse);
+      await h.state.releaseRunLock(scope);
+    });
+  });
+
   group('time zone of the server (review A3)', () {
     test('a changed timezone_id sends the whole look-back again', () async {
       final h = Harness();
@@ -624,6 +793,54 @@ void main() {
       final r = await h.run();
       expect(r['full_window_reads'], 1);
       expect(h.uploader.all.map((x) => x.day.iso), ['2026-10-19']);
+    });
+
+    test('an aborted resend does not lose the zone change: the next run finishes it, once', () async {
+      final h = Harness();
+      h.steps('2026-10-18', 8, 100);
+      h.steps('2026-10-10', 8, 200);
+      await h.run();
+      h.uploader.batches.clear();
+      h.uploader.timezoneId = 'America/New_York';
+      h.steps('2026-10-19', 9, 1);
+      final calls0 = h.uploader.calls;
+      // stop as soon as the first (normal) upload is through: the resend pass starts and is cut off
+      final r1 = await h.sync.syncNow(h.link, types: {_steps}, shouldStop: () => h.uploader.calls > calls0);
+      expect(r1.timezoneChanged, isTrue);
+      expect(r1.stopped, isTrue);
+      expect(await h.sync.store.serverTimeZone(h.link.scope), 'Europe/Berlin', reason: 'zone is kept until the resend is done');
+      expect(await h.sync.store.pendingTimeZone(h.link.scope), 'America/New_York');
+      h.uploader.batches.clear();
+      final r2 = await h.run(); // nothing new, but the resend is still open
+      expect(r2.timezoneChanged, isTrue);
+      expect(r2.outcome, SyncOutcome.success);
+      expect(h.uploader.all.map((x) => x.day.iso).toSet(), {'2026-10-10', '2026-10-18', '2026-10-19'});
+      expect(h.uploader.all.length, 3, reason: 'the look-back goes out once, not twice');
+      expect(await h.sync.store.serverTimeZone(h.link.scope), 'America/New_York');
+      expect(await h.sync.store.pendingTimeZone(h.link.scope), isNull);
+      h.uploader.batches.clear();
+      final r3 = await h.run();
+      expect(r3.timezoneChanged, isFalse);
+      expect(h.uploader.batches, isEmpty);
+    });
+
+    test('a failed resend stays open as well', () async {
+      final h = Harness();
+      h.steps('2026-10-18', 8, 100);
+      await h.run();
+      h.uploader.timezoneId = 'America/New_York';
+      h.steps('2026-10-19', 9, 1);
+      final calls0 = h.uploader.calls;
+      h.uploader.failOnCall = calls0 + 2; // normal upload ok, resend fails
+      final r1 = await h.run();
+      expect(r1.outcome, SyncOutcome.error);
+      expect(await h.sync.store.pendingTimeZone(h.link.scope), 'America/New_York');
+      expect(await h.sync.store.serverTimeZone(h.link.scope), 'Europe/Berlin');
+      h.uploader.failOnCall = null;
+      final r2 = await h.run();
+      expect(r2.outcome, SyncOutcome.success);
+      expect(await h.sync.store.serverTimeZone(h.link.scope), 'America/New_York');
+      expect(await h.sync.store.pendingTimeZone(h.link.scope), isNull);
     });
   });
 
@@ -672,4 +889,177 @@ void main() {
       expect(h.row('2026-10-18'), 10);
     });
   });
+
+  group('state outside the backup (review P3 A3)', () {
+    late Directory dir;
+    late FileKeyValueStore files;
+    setUp(() {
+      dir = Directory.systemTemp.createTempSync('ah_activity_state_');
+      files = FileKeyValueStore(Directory('${dir.path}/state'));
+    });
+    tearDown(() {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+    });
+
+    Future<List<String>> activityKeys(KeyValueStore s) async => [for (final k in await s.keys()) if (k.contains('/activity/')) k];
+
+    test('with a separate store no health data reaches the main (SharedPreferences) store', () async {
+      final h = Harness(activityKv: files);
+      h.steps('2026-10-18', 8, 100, uuid: 'x1');
+      h.steps('2026-10-17', 8, 50, uuid: 'x2');
+      final r = await h.run();
+      expect(r.outcome, SyncOutcome.success);
+      expect(await activityKeys(h.kv), isEmpty);
+      final keys = await activityKeys(files);
+      expect(keys, containsAll(<String>[
+        'user-a/profile-a/apple_health/activity/anchor/stepCount',
+        'user-a/profile-a/apple_health/activity/sent/stepCount',
+        'user-a/profile-a/apple_health/activity/idx/stepCount/2026-10',
+        'user-a/profile-a/apple_health/activity/server_tz',
+      ]));
+      // nothing but the engine's other keys (lock is gone) in the main store
+      for (final v in h.kv.data.values) {
+        expect(v.contains('2026-10-18'), isFalse, reason: 'no per-day value in the main store');
+      }
+      // and an incremental run works from the files alone
+      h.uploader.batches.clear();
+      h.steps('2026-10-19', 9, 7);
+      final r2 = await h.run();
+      expect(r2.outcome, SyncOutcome.success);
+      expect(h.uploader.all.map((x) => x.day.iso), ['2026-10-19']);
+    });
+
+    test('state of an earlier version is moved to the files and removed from the main store; nothing is sent again', () async {
+      // earlier version: everything in one store
+      final old = Harness();
+      old.steps('2026-10-18', 8, 100, uuid: 'x1');
+      old.steps('2026-10-17', 8, 50, uuid: 'x2');
+      await old.run();
+      final legacyKeys = await activityKeys(old.kv);
+      expect(legacyKeys.length, greaterThan(2));
+      final other = '${old.link.scope.prefix}sync_token/heartRate';
+      await old.kv.set(other, 'keep me'); // not ours: must stay
+      // new version on the same data
+      final state = SyncStateStore(old.kv, activityKv: files);
+      final sync = ActivityDailySync(
+          bridge: old.store,
+          catalog: testCatalog(),
+          state: state,
+          uploader: old.uploader,
+          session: const FixedSession('user-a', 'profile-a'),
+          calendar: const UtcCalendar(),
+          clock: () => _now);
+      old.uploader.batches.clear();
+      final r = await sync.syncNow(old.link, types: {_steps});
+      expect(r.outcome, SyncOutcome.success);
+      expect(r['migrated_keys'], legacyKeys.length);
+      expect(await activityKeys(old.kv), isEmpty, reason: 'deleted from SharedPreferences after the takeover');
+      expect(await old.kv.get(other), 'keep me');
+      expect((await activityKeys(files)).toSet(), legacyKeys.toSet());
+      expect(old.uploader.batches, isEmpty, reason: 'anchor and sent values came along');
+      // the index came along too: a deletion is found through it, not through the full read
+      old.store.remove(_steps, 'x1');
+      final r2 = await sync.syncNow(old.link, types: {_steps});
+      expect(r2['unknown_deletions'], 0);
+      expect(r2.emptiedDays[_steps], [d('2026-10-18')]);
+      // second start: nothing left to move
+      final r3 = await sync.syncNow(old.link, types: {_steps});
+      expect(r3['migrated_keys'], 0);
+    });
+
+    test('a key that already exists in the state store wins; the old one is just removed', () async {
+      final h = Harness(activityKv: files);
+      const k = 'user-a/profile-a/apple_health/activity/server_tz';
+      await h.kv.set(k, 'Asia/Tokyo');
+      await files.set(k, 'Europe/Berlin');
+      expect(await h.state.activityKv!.get(k), 'Europe/Berlin');
+      h.steps('2026-10-18', 8, 1);
+      await h.run();
+      expect(await h.kv.get(k), isNull);
+      expect(await files.get(k), 'Europe/Berlin');
+    });
+
+    test('if the takeover fails, the old keys stay and the run goes on', () async {
+      final old = Harness();
+      old.steps('2026-10-18', 8, 100);
+      await old.run();
+      final legacyKeys = await activityKeys(old.kv);
+      final broken = _FailingStore(files)..failSet = true;
+      final sync = ActivityDailySync(
+          bridge: old.store,
+          catalog: testCatalog(),
+          state: SyncStateStore(old.kv, activityKv: broken),
+          uploader: old.uploader,
+          session: const FixedSession('user-a', 'profile-a'),
+          calendar: const UtcCalendar(),
+          clock: () => _now);
+      final r = await sync.syncNow(old.link, types: {_steps});
+      expect(r['migration_failed'], 1);
+      expect((await activityKeys(old.kv)).toSet(), legacyKeys.toSet(), reason: 'nothing lost');
+    });
+
+    test('forget() and resetUser clear both stores, also leftovers in the main store', () async {
+      final h = Harness(activityKv: files);
+      h.steps('2026-10-18', 8, 100);
+      await h.run();
+      await h.kv.set('user-a/profile-a/apple_health/activity/sent/flightsClimbed', '{}'); // leftover
+      await h.sync.forget(h.link.scope);
+      expect(await activityKeys(files), isEmpty);
+      expect(await activityKeys(h.kv), isEmpty);
+      await h.run();
+      expect(await activityKeys(files), isNotEmpty);
+      await h.kv.set('user-a/profile-a/apple_health/activity/sent/stepCount', '{}');
+      await h.state.resetUser('user-a');
+      expect(await activityKeys(files), isEmpty);
+      expect(await activityKeys(h.kv), isEmpty);
+    });
+
+    test('forget(types) removes a leftover of that type in the main store too, so it cannot come back', () async {
+      final h = Harness(activityKv: files);
+      await h.kv.set('user-a/profile-a/apple_health/activity/sent/stepCount', '{"2026-10-18":1}');
+      await h.kv.set('user-a/profile-a/apple_health/activity/anchor/stepCount', '{"a":"1","lb":365}');
+      await h.sync.forget(h.link.scope, types: [_steps]);
+      h.steps('2026-10-18', 8, 100);
+      final r = await h.run();
+      expect(r['migrated_keys'], 0);
+      expect(h.row('2026-10-18'), 100);
+    });
+
+    test('the UUID index covers 7 days by default', () async {
+      expect(const ActivityDailyConfig().indexDays, 7);
+      final h = Harness(activityKv: files);
+      h.steps('2026-10-19', 8, 1, uuid: 'today');
+      h.steps('2026-10-13', 8, 1, uuid: 'seven');
+      h.steps('2026-10-12', 8, 1, uuid: 'eight');
+      await h.run();
+      final found = await h.sync.store.lookup(h.link.scope, _steps, {'today', 'seven', 'eight'});
+      expect(found.keys.toSet(), {'today', 'seven'});
+      // deleting an older sample still ends up right: full read, compare, no delete
+      h.uploader.batches.clear();
+      h.store.remove(_steps, 'eight');
+      final r = await h.run();
+      expect(r['unknown_deletions'], 1);
+      expect(h.uploader.batches, isEmpty);
+      expect(r.emptiedDays[_steps], [d('2026-10-12')]);
+    });
+  });
+}
+
+/// Store that can be made to fail on writes.
+class _FailingStore implements KeyValueStore {
+  _FailingStore(this.inner);
+  final KeyValueStore inner;
+  bool failSet = false;
+  @override
+  Future<String?> get(String key) => inner.get(key);
+  @override
+  Future<void> set(String key, String value) async {
+    if (failSet) throw const FileSystemException('disk full');
+    await inner.set(key, value);
+  }
+
+  @override
+  Future<void> remove(String key) => inner.remove(key);
+  @override
+  Future<Iterable<String>> keys() => inner.keys();
 }

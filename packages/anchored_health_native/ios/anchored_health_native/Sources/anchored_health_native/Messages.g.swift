@@ -1237,6 +1237,12 @@ protocol AnchoredHealthApi {
   func sampleRefs(request: HkSampleRefsRequest, completion: @escaping (Result<HkSampleRefsResult, Error>) -> Void)
   /// Date of birth / biological sex (comparison only, nothing is stored).
   func characteristics() throws -> HkCharacteristics
+  /// Creates (if missing) the directory `<Application Support>/<name>` and
+  /// marks it `NSURLIsExcludedFromBackupKey` (not part of device or iCloud
+  /// backups); returns its absolute path. For the engine's local state of the
+  /// daily totals. [name] is a plain directory name (no separators). Throws if
+  /// the mark cannot be set.
+  func prepareStateDirectory(name: String) throws -> String
 }
 
 /// Generated setup class from Pigeon to handle messages through the `binaryMessenger`.
@@ -1456,6 +1462,26 @@ class AnchoredHealthApiSetup {
       }
     } else {
       characteristicsChannel.setMessageHandler(nil)
+    }
+    /// Creates (if missing) the directory `<Application Support>/<name>` and
+    /// marks it `NSURLIsExcludedFromBackupKey` (not part of device or iCloud
+    /// backups); returns its absolute path. For the engine's local state of the
+    /// daily totals. [name] is a plain directory name (no separators). Throws if
+    /// the mark cannot be set.
+    let prepareStateDirectoryChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.anchored_health_native.AnchoredHealthApi.prepareStateDirectory\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
+    if let api = api {
+      prepareStateDirectoryChannel.setMessageHandler { message, reply in
+        let args = message as! [Any?]
+        let nameArg = args[0] as! String
+        do {
+          let result = try api.prepareStateDirectory(name: nameArg)
+          reply(wrapResult(result))
+        } catch {
+          reply(wrapError(error))
+        }
+      }
+    } else {
+      prepareStateDirectoryChannel.setMessageHandler(nil)
     }
   }
 }

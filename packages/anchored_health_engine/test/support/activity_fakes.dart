@@ -180,7 +180,21 @@ class FakeActivityUploader implements ActivityDailyUploader {
   /// Throw on the n-th call (1-based).
   int? failOnCall;
   int rejectEvery = 0;
+
+  /// Turn down every element (inactive mapping, type off for the connection, consent missing):
+  /// the server answers without an error and counts them as `rejected` (README `hk2`).
+  bool rejectAll = false;
+
+  /// Reject only the n-th call (1-based) completely.
+  int? rejectCall;
+
+  /// Count every element as dropped echo.
+  bool echoAll = false;
+
+  /// Answer with empty counters (a reply that does not say what happened).
+  bool silent = false;
   int _calls = 0;
+  int get calls => _calls;
 
   List<ActivityIngestElement> get all => [for (final b in batches) ...b];
 
@@ -189,6 +203,11 @@ class FakeActivityUploader implements ActivityDailyUploader {
     _calls++;
     if (failOnCall == _calls) throw StateError('network');
     batches.add(days);
+    if (silent) return ActivityIngestResult(timezoneId: timezoneId);
+    if (echoAll) return ActivityIngestResult(echo: days.length, timezoneId: timezoneId);
+    if (rejectAll || rejectCall == _calls) {
+      return ActivityIngestResult(rejected: days.length, timezoneId: timezoneId);
+    }
     var ins = 0, upd = 0, dup = 0, rej = 0;
     for (final (i, e) in days.indexed) {
       if (rejectEvery > 0 && (i + 1) % rejectEvery == 0) {

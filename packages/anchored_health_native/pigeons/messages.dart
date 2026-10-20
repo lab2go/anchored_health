@@ -313,4 +313,11 @@ abstract class AnchoredHealthApi {
 
   /// Date of birth / biological sex (comparison only, nothing is stored).
   HkCharacteristics characteristics();
+
+  /// Creates (if missing) the directory `<Application Support>/<name>` and
+  /// marks it `NSURLIsExcludedFromBackupKey` (not part of device or iCloud
+  /// backups); returns its absolute path. For the engine's local state of the
+  /// daily totals. [name] is a plain directory name (no separators). Throws if
+  /// the mark cannot be set.
+  String prepareStateDirectory(String name);
 }

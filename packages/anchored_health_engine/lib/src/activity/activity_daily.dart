@@ -94,7 +94,7 @@ class ActivityDailyConfig {
     this.sourcePackage = defaultActivitySourcePackage,
     this.sourceName = 'Apple Health',
     this.defaultLookbackDays = defaultActivityLookbackDays,
-    this.indexDays = 35,
+    this.indexDays = 7,
     this.refsPageLimit = 5000,
     this.batchSize = 2000,
     this.batchSpanDays = 45,
@@ -111,8 +111,11 @@ class ActivityDailyConfig {
   final String sourceName;
   final int defaultLookbackDays;
 
-  /// How many recent days the UUID -> day index covers. Deletions of older or
-  /// unknown samples trigger a read of the whole look-back (never a delete).
+  /// How many recent days the UUID -> day index covers (default 7: late samples
+  /// of a watch arrive within days; the index is health data and kept small).
+  /// Deletions of older or unknown samples trigger a read of the whole look-back
+  /// and a comparison with the sent values (never a delete): one statistics
+  /// query, an upload only for days that really changed.
   final int indexDays;
   final int refsPageLimit;
 
@@ -172,15 +175,78 @@ class ActivityTypePlan {
   final int unknownDeletions;
 }
 
+/// Progress of a run, reported after every accepted batch (and once before the
+/// first one of a type). Numbers only, no values.
+class ActivityProgress {
+  const ActivityProgress({
+    required this.platformType,
+    required this.typeIndex,
+    required this.typeCount,
+    required this.batchesDone,
+    required this.batchesTotal,
+    required this.daysDone,
+    required this.daysTotal,
+  });
+  final String platformType;
+
+  /// 0-based position of the type in this run and the number of types.
+  final int typeIndex;
+  final int typeCount;
+
+  /// Batches of this type: accepted so far / to send in this run.
+  final int batchesDone;
+  final int batchesTotal;
+
+  /// Days of this type: accepted so far / to send in this run.
+  final int daysDone;
+  final int daysTotal;
+}
+
+typedef ActivityProgressCallback = void Function(ActivityProgress progress);
+
+/// Why a type failed (see [ActivitySyncResult.failureReasons]).
+class ActivityFailure {
+  /// The server turned elements down (inactive mapping, type switched off for
+  /// the connection, consent missing, wrong unit, ...). Nothing of the batch
+  /// was stored; neither the batch nor the anchor was committed.
+  static const rejected = 'rejected';
+
+  /// The server dropped elements as echo of the app's own packages.
+  static const echo = 'echo';
+
+  /// The server's counters do not add up to the batch (answer not trusted).
+  static const answerMismatch = 'answer_mismatch';
+
+  /// The type has no server id in the catalog.
+  static const noVitalTypeId = 'no_vital_type_id';
+
+  /// Network, server error, bridge error.
+  static const error = 'error';
+}
+
 class ActivitySyncResult {
-  ActivitySyncResult(this.outcome, {Map<String, int>? counters, List<String>? failedTypes})
+  ActivitySyncResult(this.outcome,
+      {Map<String, int>? counters, List<String>? failedTypes, Map<String, String>? failureReasons})
       : counters = counters ?? {},
-        failedTypes = failedTypes ?? [];
+        failedTypes = failedTypes ?? [],
+        failureReasons = failureReasons ?? {};
   final SyncOutcome outcome;
 
   /// Counters (no values).
   final Map<String, int> counters;
   final List<String> failedTypes;
+
+  /// Per failed type: one of the [ActivityFailure] constants.
+  final Map<String, String> failureReasons;
+
+  /// `shouldStop` ended the run early. Batches the server had accepted are kept
+  /// (their values are stored as sent), the anchors of unfinished types are not
+  /// advanced; the next run goes on with the rest. [outcome] is `partial`
+  /// unless a type failed.
+  bool stopped = false;
+
+  /// Types that did not finish because of [stopped].
+  final List<String> incompleteTypes = [];
 
   /// Per platform type: days that have no data any more but were sent before.
   final Map<String, List<LocalDay>> emptiedDays = {};
@@ -441,12 +507,24 @@ class ActivityDailySync {
   }
 
   /// One run over [types] (HealthKit platform types, e.g. `stepCount`).
-  /// Anchors only advance after a successful upload of the type.
+  /// Anchors only advance after the whole type was accepted by the server.
+  ///
+  /// * A batch the server turned down (`rejected` > 0, echo, counters that do
+  ///   not add up) is **not** stored as sent: the type fails (see
+  ///   [ActivitySyncResult.failureReasons]) and the next run sends the days again
+  ///   (review A1).
+  /// * Every accepted batch is stored as sent at once, so that a failure or an
+  ///   abort in batch n of 41 loses only the rest (review A2).
+  /// * [onProgress] is called before the first batch of a type and after every
+  ///   accepted batch; [shouldStop] is asked before every batch and type
+  ///   (watchdog or "Cancel" of the app); `true` ends the run cleanly.
   Future<ActivitySyncResult> syncNow(
     HealthLink link, {
     required Set<String> types,
     int? lookbackDays,
     bool forceFull = false,
+    ActivityProgressCallback? onProgress,
+    bool Function()? shouldStop,
   }) async {
     if (link.platform != bridge.platform) {
       throw ArgumentError('Connection ${link.platform.id} does not match bridge ${bridge.platform.id}');
@@ -462,26 +540,78 @@ class ActivityDailySync {
     }
     final result = ActivitySyncResult(SyncOutcome.success);
     final failed = <String>[];
+    final ctl = _RunControl(types.length, onProgress, shouldStop);
     try {
-      var tzChanged = await _runTypes(link, types, result, failed,
-          lookbackDays: lookbackDays, forceFull: forceFull, resendAll: false);
-      if (tzChanged && failed.isEmpty) {
+      try {
+        // state of an earlier version (SharedPreferences) moves to the state store
+        final moved = await store.migrateLegacy(scope);
+        _add(result, 'migrated_keys', moved);
+      } catch (_) {
+        _add(result, 'migration_failed', 1);
+      }
+      // A zone change seen in an earlier run whose resend did not finish: send the whole look-back again now.
+      final pendingBefore = await store.pendingTimeZone(scope);
+      if (pendingBefore != null) {
+        result.timezoneChanged = true;
+        result.counters['timezone_resend'] = 1;
+        await store.clearAnchorsAndSent(scope, types);
+      }
+      final tzChanged = await _runTypes(link, types, result, failed, ctl,
+          lookbackDays: lookbackDays, forceFull: forceFull || pendingBefore != null, resendAll: pendingBefore != null);
+      var resendDone = pendingBefore != null;
+      if (pendingBefore == null && tzChanged && failed.isEmpty && !result.stopped) {
         // The server cut the days in another zone: send the whole look-back again.
         result.timezoneChanged = true;
         result.counters['timezone_resend'] = 1;
         await store.clearAnchorsAndSent(scope, types);
-        await _runTypes(link, types, result, failed, lookbackDays: lookbackDays, forceFull: true, resendAll: true);
+        await _runTypes(link, types, result, failed, ctl,
+            lookbackDays: lookbackDays, forceFull: true, resendAll: true);
+        resendDone = true;
+      }
+      // The new zone counts only after the resend went through. Until then the open resend is kept, so that an
+      // abort or an error in between does not lose it.
+      final tz = result.timezoneId ?? pendingBefore;
+      if (resendDone && failed.isEmpty && !result.stopped) {
+        if (tz != null) await store.saveServerTimeZone(scope, tz);
+        await store.clearPendingTimeZone(scope);
       }
     } finally {
       await state.releaseRunLock(scope);
     }
     final outcome = failed.isEmpty
-        ? SyncOutcome.success
+        ? (result.stopped ? SyncOutcome.partial : SyncOutcome.success)
         : (failed.length >= types.length ? SyncOutcome.error : SyncOutcome.partial);
-    return ActivitySyncResult(outcome, counters: result.counters, failedTypes: failed)
+    return ActivitySyncResult(outcome,
+        counters: result.counters, failedTypes: failed, failureReasons: result.failureReasons)
       ..emptiedDays.addAll(result.emptiedDays)
       ..timezoneChanged = result.timezoneChanged
-      ..timezoneId = result.timezoneId;
+      ..timezoneId = result.timezoneId
+      ..stopped = result.stopped
+      ..incompleteTypes.addAll(result.incompleteTypes);
+  }
+
+  /// Zone of the server's answer against the stored one. Stores the very first
+  /// value; a **different** one is only noted as an open resend (see [syncNow]),
+  /// the stored zone changes when the resend is done.
+  Future<bool> _zoneDiffers(SyncScope scope, String? tz) async {
+    if (tz == null || tz.isEmpty) return false;
+    final old = await store.serverTimeZone(scope);
+    if (old == null) {
+      await store.saveServerTimeZone(scope, tz);
+      return false;
+    }
+    if (old == tz) return false;
+    if (await store.pendingTimeZone(scope) == null) await store.savePendingTimeZone(scope, tz);
+    return true;
+  }
+
+  /// `null` = the answer says the batch was taken; otherwise an [ActivityFailure].
+  String? _batchProblem(ActivityIngestResult r, int sent) {
+    if (r.rejected > 0) return ActivityFailure.rejected;
+    if (r.echo > 0) return ActivityFailure.echo;
+    final accounted = r.inserted + r.updated + r.deleted + r.duplicates + r.skippedDeleted;
+    if (accounted < sent) return ActivityFailure.answerMismatch;
+    return null;
   }
 
   /// Returns `true` if the server reported another zone than the stored one.
@@ -489,25 +619,49 @@ class ActivityDailySync {
     HealthLink link,
     Set<String> types,
     ActivitySyncResult result,
-    List<String> failed, {
+    List<String> failed,
+    _RunControl ctl, {
     int? lookbackDays,
     required bool forceFull,
     required bool resendAll,
   }) async {
     var tzChanged = false;
-    for (final type in types) {
+    final scope = link.scope;
+    for (final (ti, type) in types.indexed) {
       if (failed.contains(type)) continue;
+      if (result.stopped || ctl.stop()) {
+        result.stopped = true;
+        result.incompleteTypes.add(type);
+        continue;
+      }
       try {
         if (_entry(link.platform, type)?.vitalTypeId == null) {
           _add(result, 'no_vital_type_id', 1);
+          result.failureReasons[type] = ActivityFailure.noVitalTypeId;
           failed.add(type);
           continue;
         }
-        final plan = await collect(link.scope, type,
+        final plan = await collect(scope, type,
             lookbackDays: lookbackDays, forceFull: forceFull, resendAll: resendAll);
         final elements = elementsOf(plan);
-        for (final batch in buildActivityBatches(elements,
-            maxSize: config.batchSize, maxSpanDays: config.batchSpanDays)) {
+        final planValue = {for (final u in plan.upload) u.day: u.value}; // platform unit, as `sent` keeps it
+        final batches = buildActivityBatches(elements, maxSize: config.batchSize, maxSpanDays: config.batchSpanDays);
+        var batchesDone = 0, daysDone = 0;
+        void report() => ctl.progress?.call(ActivityProgress(
+            platformType: type,
+            typeIndex: ti,
+            typeCount: ctl.typeCount,
+            batchesDone: batchesDone,
+            batchesTotal: batches.length,
+            daysDone: daysDone,
+            daysTotal: elements.length));
+        report();
+        var stoppedHere = false;
+        for (final batch in batches) {
+          if (ctl.stop()) {
+            stoppedHere = true;
+            break;
+          }
           final r = await uploader.ingestDaily(link.linkId, batch);
           _add(result, 'days_sent', batch.length);
           _add(result, 'inserted', r.inserted);
@@ -519,8 +673,31 @@ class ActivityDailySync {
           _add(result, 'unknown_fields', r.unknownFields);
           if (r.timezoneId != null) {
             result.timezoneId = r.timezoneId;
-            if (await noteServerTimeZone(link.scope, r.timezoneId)) tzChanged = true;
+            if (await _zoneDiffers(scope, r.timezoneId)) tzChanged = true;
           }
+          final problem = _batchProblem(r, batch.length);
+          if (problem != null) {
+            // Not taken by the server: nothing is stored as sent, the anchor stays.
+            result.failureReasons[type] = problem;
+            failed.add(type);
+            break;
+          }
+          // taken: remember it now, a later failure or abort must not send it again
+          await store.addSent(
+              scope,
+              type,
+              {for (final e in batch) e.day: planValue[e.day]!},
+              keepFrom: plan.windowFrom);
+          await state.renewRunLock(scope, _clock());
+          batchesDone++;
+          daysDone += batch.length;
+          report();
+        }
+        if (failed.contains(type)) continue;
+        if (stoppedHere) {
+          result.stopped = true;
+          result.incompleteTypes.add(type);
+          continue;
         }
         await commit(plan);
         if (plan.emptied.isNotEmpty) result.emptiedDays[type] = plan.emptied;
@@ -528,7 +705,8 @@ class ActivityDailySync {
         _add(result, 'unknown_deletions', plan.unknownDeletions);
         if (plan.fullWindow) _add(result, 'full_window_reads', 1);
       } catch (_) {
-        failed.add(type);
+        result.failureReasons.putIfAbsent(type, () => ActivityFailure.error);
+        if (!failed.contains(type)) failed.add(type);
       }
     }
     return tzChanged;
@@ -549,4 +727,13 @@ class ActivityDailySync {
     if (first.daysUntil(last) > 366) last = first.addDays(366);
     return [...daysInRange(first, last)];
   }
+}
+
+/// Callbacks of one run.
+class _RunControl {
+  _RunControl(this.typeCount, this.progress, this._shouldStop);
+  final int typeCount;
+  final ActivityProgressCallback? progress;
+  final bool Function()? _shouldStop;
+  bool stop() => _shouldStop?.call() ?? false;
 }

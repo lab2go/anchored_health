@@ -123,10 +123,22 @@ class BackfillCursor {
 /// ([deviceIdKey]) lives **outside** the `<uid>/` prefix and survives
 /// [resetUser].
 class SyncStateStore {
-  SyncStateStore(this.kv, {Random? random, this.deviceIdKey = defaultDeviceIdKey})
+  SyncStateStore(this.kv, {this.activityKv, Random? random, this.deviceIdKey = defaultDeviceIdKey})
       : _random = random ?? Random.secure();
 
   final KeyValueStore kv;
+
+  /// Separate store for the local state of the daily totals (`.../activity/...`
+  /// keys: per-day values and the UUID -> day index, i.e. health data). The app
+  /// passes a store that lives **outside the device and iCloud backup**
+  /// (`FileKeyValueStore` in a directory with `NSURLIsExcludedFromBackupKey`,
+  /// see `openBackupExcludedStateStore`). Null = everything in [kv] (as before;
+  /// then [kv] must not be part of a backup either).
+  ///
+  /// With a separate store, keys written to [kv] by an earlier version are
+  /// moved over on the first run of [ActivityDailySync.syncNow] (and removed
+  /// from [kv]).
+  final KeyValueStore? activityKv;
   final Random _random;
 
   /// Default key of the installation id.
@@ -190,6 +202,10 @@ class SyncStateStore {
 
   Future<void> releaseRunLock(SyncScope s) => kv.remove(runLockKey(s));
 
+  /// Long runs (daily totals: up to ~200 calls) refresh the lock after each
+  /// call, so that it is not taken over as stale in the middle of a run.
+  Future<void> renewRunLock(SyncScope s, DateTime now) => kv.set(runLockKey(s), now.toUtc().toIso8601String());
+
   Future<DateTime?> lastRunAt(SyncScope s) async {
     final raw = await kv.get(lastRunKey(s));
     return raw == null ? null : DateTime.tryParse(raw);
@@ -208,13 +224,18 @@ class SyncStateStore {
   }
 
   /// Logout/reset: deletes everything under `<uid>/` (anchors, cursors,
-  /// series sources, locks), never the installation id.
+  /// series sources, locks) in [kv] and in [activityKv], never the installation
+  /// id.
   Future<int> resetUser(String userId) async {
     final prefix = '$userId/';
-    final keys = (await kv.keys()).where((k) => k.startsWith(prefix)).toList();
-    for (final k in keys) {
-      await kv.remove(k);
+    var n = 0;
+    for (final store in [kv, ?activityKv]) {
+      final keys = (await store.keys()).where((k) => k.startsWith(prefix)).toList();
+      for (final k in keys) {
+        await store.remove(k);
+      }
+      n += keys.length;
     }
-    return keys.length;
+    return n;
   }
 }

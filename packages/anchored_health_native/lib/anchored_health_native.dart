@@ -135,4 +135,12 @@ class AnchoredHealthNative {
       _checked.delete(type, uuids);
 
   Future<HkCharacteristics> characteristics() => _checked.characteristics();
+
+  /// Creates (if missing) `<Application Support>/[name]` and excludes it from
+  /// device and iCloud backups (`NSURLIsExcludedFromBackupKey`); returns the
+  /// absolute path. For local state that is health data (the engine's daily
+  /// totals). Throws on failure to set the mark (never returns a directory that
+  /// would end up in a backup).
+  Future<String> prepareStateDirectory(String name) =>
+      _checked.prepareStateDirectory(name);
 }

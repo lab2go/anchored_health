@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:anchored_health_native/anchored_health_native.dart';
@@ -14,6 +15,7 @@ void main() {
     expect(() => n.dailyTotals(type: 'stepCount', fromDay: '2026-10-01', toDay: '2026-10-19'),
         throwsA(isA<HealthPlatformUnsupported>()));
     expect(() => n.sampleRefs(type: 'stepCount'), throwsA(isA<HealthPlatformUnsupported>()));
+    expect(() => n.prepareStateDirectory('state'), throwsA(isA<HealthPlatformUnsupported>()));
   });
 
   test('default without override follows the target platform', () {
@@ -114,6 +116,29 @@ void main() {
     expect(r.refs.single.uuid, 'U1');
     expect(r.deletedUuids, ['D1']);
     expect(r.nextAnchor, 'QQ==');
+    messenger.setMockMessageHandler(channel, null);
+  });
+
+  test('Pigeon channel: prepareStateDirectory sends the name and returns the path; errors reach the caller', () async {
+    const channel = 'dev.flutter.pigeon.anchored_health_native.AnchoredHealthApi.prepareStateDirectory';
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    const codec = AnchoredHealthApi.pigeonChannelCodec;
+    String? seen;
+    var fail = false;
+    messenger.setMockMessageHandler(channel, (ByteData? message) async {
+      seen = (codec.decodeMessage(message) as List<Object?>).first as String;
+      if (fail) {
+        return codec.encodeMessage(<Object?>['backup_exclusion_failed', 'State directory could not be excluded from backups', null]);
+      }
+      return codec.encodeMessage(<Object?>['/var/mobile/Library/Application Support/$seen']);
+    });
+    final n = AnchoredHealthNative(isSupportedPlatform: true);
+    expect(await n.prepareStateDirectory('anchored_health_state'), '/var/mobile/Library/Application Support/anchored_health_state');
+    expect(seen, 'anchored_health_state');
+    fail = true;
+    await expectLater(
+        n.prepareStateDirectory('x'),
+        throwsA(isA<PlatformException>().having((e) => e.code, 'code', 'backup_exclusion_failed')));
     messenger.setMockMessageHandler(channel, null);
   });
 }

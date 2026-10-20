@@ -30,4 +30,10 @@ anchored query that only returns UUID, start and end (and deleted UUIDs), so
 that a caller can find the days a change or deletion touches. Both calls reject
 every type except the five cumulative activity types (`invalid_argument`).
 
+`prepareStateDirectory(name)` creates `<Application Support>/<name>` and marks it
+`NSURLIsExcludedFromBackupKey`; it returns the absolute path and throws
+(`backup_exclusion_failed`) instead of returning a directory that would end up in a
+backup. The engine keeps the per-day values and the UUID index of the daily totals
+there (`openBackupExcludedStateStore`).
+
 Regenerate Pigeon: `dart run pigeon --input pigeons/messages.dart`.

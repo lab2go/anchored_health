@@ -3,3 +3,4 @@
 library;
 
 export 'src/bridge/native_health_bridge.dart';
+export 'src/bridge/native_state_store.dart';

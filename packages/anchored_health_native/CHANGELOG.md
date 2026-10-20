@@ -8,6 +8,11 @@
   and Apple Watch are merged by HealthKit, never split by source) and
   `sampleRefs` (anchored query returning only UUID/start/end and deleted UUIDs).
 - Swift: `ActivityDayGrid` (Foundation only) with tests `ActivityDailyTests`.
+- Review P3 A3: `prepareStateDirectory(name)` creates `<Application Support>/<name>`
+  and marks it `NSURLIsExcludedFromBackupKey` (health data of the engine stays out of
+  device and iCloud backups; throws if the mark cannot be set). Swift `StateDirectory`
+  (Foundation only) with tests `StateDirectoryTests`.
+- podspec version aligned with `pubspec.yaml` (0.3.0).
 
 ## 0.2.0 (draft, no tag)
 

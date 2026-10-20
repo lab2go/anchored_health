@@ -300,6 +300,6 @@ class _Collect implements ActivityDailyUploader {
   @override
   Future<ActivityIngestResult> ingestDaily(String linkId, List<ActivityIngestElement> days) async {
     sent.addAll(days);
-    return const ActivityIngestResult();
+    return ActivityIngestResult(inserted: days.length); // the answer must account for the batch (review P3 A1)
   }
 }

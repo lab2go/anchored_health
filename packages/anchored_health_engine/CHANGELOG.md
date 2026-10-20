@@ -13,6 +13,18 @@
 - `HealthSyncEngine.syncNow` / `extendBackfill` skip `dailySum` types.
 - Rules: no tombstone and no 0 for an empty read; one fixed merged `source_package`;
   no `external_version`.
+- Review P3 A1: a batch the server turned down (`rejected` > 0, `echo` > 0, counters
+  that do not cover the batch) is not stored as sent and the anchor does not advance;
+  the type fails with a reason (`ActivityFailure`, `ActivitySyncResult.failureReasons`).
+- Review P3 A2: every accepted batch is stored as sent at once and renews the run lock
+  (`SyncStateStore.renewRunLock`); `syncNow(onProgress:, shouldStop:)`,
+  `ActivityProgress`, `ActivitySyncResult.stopped` / `incompleteTypes`. An open zone
+  change survives an abort or error (`tz_pending`).
+- Review P3 A3: `SyncStateStore(activityKv:)` keeps the local state of the daily totals
+  in its own store; `FileKeyValueStore` (`package:anchored_health_engine/file_store.dart`)
+  and `openBackupExcludedStateStore()` (`native_bridge.dart`) for a directory outside
+  device and iCloud backups; keys of an earlier version move over on the first run;
+  UUID index 35 -> 7 days (`ActivityDailyConfig.indexDays`).
 
 ## 0.2.0 (draft, no tag)
 

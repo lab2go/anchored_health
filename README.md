@@ -94,9 +94,38 @@ would otherwise upload single samples):
   those days, compares with the last accepted value and uploads changes through
   `ActivityDailyUploader.ingestDaily` (app: RPC `health_ingest_daily`). The anchor
   is stored only after all batches of a type succeeded.
-* **Changes and deletions:** a local index (UUID -> days of the last 35 days,
-  monthly shards under `<uid>/<pid>/<platform>/activity/idx/...`) tells which
-  days a deletion touches; an unknown UUID recomputes the whole look-back. A
+* **What counts as accepted:** only a batch the server really took. `rejected`
+  > 0 (inactive mapping, type off for the connection, consent missing, wrong
+  unit), `echo` > 0, or counters that do not add up to the batch fail the type
+  (`ActivitySyncResult.failedTypes`, reason in `failureReasons`, constants in
+  `ActivityFailure`) and are **not** stored as sent; the anchor stays. The next run
+  sends the days again, so the run that happens before the mappings are active
+  loses nothing. The uploader must return the server's counters as they are
+  (`ActivityIngestResult.fromJson`).
+* **Progress and abort:** every accepted batch is stored as sent at once (a
+  failure in batch n of 41 only repeats the rest) and renews the run lock.
+  `syncNow(..., onProgress: ..., shouldStop: ...)` reports `ActivityProgress`
+  (type, batches, days; no values) and asks `shouldStop` before every type and
+  batch (watchdog or "Cancel"); `true` ends the run cleanly
+  (`ActivitySyncResult.stopped`, `incompleteTypes`, outcome `partial`), the
+  next run continues with what is left.
+* **Local state outside the backup:** the per-day values and the UUID index are
+  health data. Give `SyncStateStore` a second store for them:
+  `SyncStateStore(prefsStore, activityKv: await openBackupExcludedStateStore())`
+  (`package:anchored_health_engine/native_bridge.dart`). It is a directory in
+  Application Support marked `NSURLIsExcludedFromBackupKey` by the plugin
+  (`prepareStateDirectory`), one file per key, written atomically
+  (`FileKeyValueStore`); SharedPreferences cannot be excluded from backups.
+  Keys an earlier version wrote to the main store are moved over on the first
+  `syncNow` of a connection and removed from there (`migrated_keys`);
+  `forget` and `resetUser` clear both stores. Without `activityKv` everything
+  stays in the one store as before (then that store must not be backed up).
+* **Changes and deletions:** a local index (UUID -> days of the last 7 days,
+  `ActivityDailyConfig.indexDays`, monthly shards under
+  `<uid>/<pid>/<platform>/activity/idx/...`) tells which
+  days a deletion touches; an unknown or older UUID recomputes the whole
+  look-back and compares it with the sent values (one statistics query, an
+  upload only for days that really changed). A
   late sample (old start, new insertion) recomputes its old day. An empty read
   **never** deletes anything and is never sent as 0: days that lost all data
   are only reported (`ActivitySyncResult.emptiedDays`).
@@ -107,6 +136,8 @@ would otherwise upload single samples):
   user request, never created by the engine), batches of one type and a limited
   period (<= 2000 elements, <= 45 days per batch, newest first). The answer's
   `timezone_id` is stored; when it changes the whole look-back is sent again.
+  The new zone is only kept after that resend went through (an abort or error in
+  between leaves the resend open for the next run).
 * **Revocation:** `ActivityDailySync.forget(scope)` removes anchors, sent values
   and the index of a connection (`SyncStateStore.resetUser` does it too). The
   server is not touched.
@@ -118,7 +149,7 @@ would otherwise upload single samples):
 final sync = ActivityDailySync(
   bridge: nativeBridge,                       // NativeHealthBridge implements ActivityDailyBridge
   catalog: catalog,                           // withVitalTypeIds(...) for the five daily types
-  state: SyncStateStore(myKeyValueStore),
+  state: SyncStateStore(myKeyValueStore, activityKv: await openBackupExcludedStateStore()),
   uploader: myDailyUploader,                  // rpc('health_ingest_daily', {p_link_id, p_days, p_run_id})
   session: mySession,
 );

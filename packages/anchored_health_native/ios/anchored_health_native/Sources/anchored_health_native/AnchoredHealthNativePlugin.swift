@@ -69,4 +69,20 @@ final class AnchoredHealthApiImpl: AnchoredHealthApi {
   }
 
   func characteristics() throws -> HkCharacteristics { try native.characteristics() }
+
+  func prepareStateDirectory(name: String) throws -> String {
+    do {
+      return try StateDirectory.prepare(name: name).path
+    } catch StateDirectory.Failure.invalidName {
+      throw PigeonError(code: "invalid_argument", message: "Invalid state directory name", details: nil)
+    } catch StateDirectory.Failure.notExcluded {
+      throw PigeonError(
+        code: "backup_exclusion_failed", message: "State directory could not be excluded from backups",
+        details: nil)
+    } catch {
+      let ns = error as NSError
+      throw PigeonError(
+        code: "state_directory_error", message: ns.localizedDescription, details: "\(ns.domain):\(ns.code)")
+    }
+  }
 }

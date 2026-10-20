@@ -1500,4 +1500,28 @@ class AnchoredHealthApi {
     ;
     return pigeonVar_replyValue! as HkCharacteristics;
   }
+
+  /// Creates (if missing) the directory `<Application Support>/<name>` and
+  /// marks it `NSURLIsExcludedFromBackupKey` (not part of device or iCloud
+  /// backups); returns its absolute path. For the engine's local state of the
+  /// daily totals. [name] is a plain directory name (no separators). Throws if
+  /// the mark cannot be set.
+  Future<String> prepareStateDirectory(String name) async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.anchored_health_native.AnchoredHealthApi.prepareStateDirectory$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channel = BasicMessageChannel<Object?>(
+      pigeonVar_channelName,
+      pigeonChannelCodec,
+      binaryMessenger: pigeonVar_binaryMessenger,
+    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[name]);
+    final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
+
+    final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
+    return pigeonVar_replyValue! as String;
+  }
 }

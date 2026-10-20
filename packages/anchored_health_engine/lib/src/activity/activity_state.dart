@@ -28,6 +28,13 @@ class ActivityAnchor {
 /// `<uid>/<pid>/<platform>/activity/...`, so `SyncStateStore.resetUser` removes
 /// them with everything else; [clearType]/[clearAll] do it on revocation.
 ///
+/// **Where it lives:** in `SyncStateStore.activityKv` if the app gave one (a
+/// file store outside the backup, review A3), otherwise in `SyncStateStore.kv`.
+/// The values are health data (a daily sum per day, and which UUID touched
+/// which day), so the app must not keep them in SharedPreferences (part of the
+/// device and iCloud backup). [migrateLegacy] moves keys an earlier version
+/// wrote to `kv` over to `activityKv`.
+///
 /// * `anchor/<type>`: [ActivityAnchor].
 /// * `sent/<type>`: day -> last value the server accepted (to send only
 ///   changes; also tells which days the server holds).
@@ -35,17 +42,30 @@ class ActivityAnchor {
 ///   `indexDays` days, in shards by month of the first day. Only needed to
 ///   find the days a deletion touches (HealthKit reports only the UUID).
 /// * `server_tz`: time zone the server reported for the day boundaries.
+/// * `tz_pending`: a different zone was reported and the whole look-back still
+///   has to be sent again (set when seen, removed when the resend went through,
+///   so an abort in between does not lose the zone change).
 class ActivityDailyState {
   ActivityDailyState(this.state);
 
   final SyncStateStore state;
-  KeyValueStore get _kv => state.kv;
+
+  /// Where the state lives.
+  KeyValueStore get _kv => state.activityKv ?? state.kv;
+
+  /// Stores that may still hold keys of an earlier version (the main store, if
+  /// the state has moved to its own one).
+  KeyValueStore? get _legacy {
+    final target = state.activityKv;
+    return (target == null || identical(target, state.kv)) ? null : state.kv;
+  }
 
   String _base(SyncScope s) => '${s.prefix}activity/';
   String anchorKey(SyncScope s, String type) => '${_base(s)}anchor/$type';
   String sentKey(SyncScope s, String type) => '${_base(s)}sent/$type';
   String indexPrefix(SyncScope s, String type) => '${_base(s)}idx/$type/';
   String serverTzKey(SyncScope s) => '${_base(s)}server_tz';
+  String pendingTzKey(SyncScope s) => '${_base(s)}tz_pending';
 
   // --- anchor ---
 
@@ -79,8 +99,18 @@ class ActivityDailyState {
 
   Future<void> saveSent(SyncScope s, String type, Map<LocalDay, double> sent) => _kv.set(
         sentKey(s, type),
-        jsonEncode({for (final e in sent.entries) e.key.iso: e.value}),
+        jsonEncode({for (final e in (sent.entries.toList()..sort((a, b) => a.key.compareTo(b.key)))) e.key.iso: e.value}),
       );
+
+  /// Adds [accepted] (days the server took in an answered batch) to the stored
+  /// values, so that a later failure or abort does not send them again.
+  /// Forgets days before [keepFrom].
+  Future<void> addSent(SyncScope s, String type, Map<LocalDay, double> accepted, {required LocalDay keepFrom}) async {
+    final sent = await this.sent(s, type);
+    sent.addAll(accepted);
+    sent.removeWhere((d, _) => d.isBefore(keepFrom));
+    await saveSent(s, type, sent);
+  }
 
   // --- UUID -> days index ---
 
@@ -174,14 +204,53 @@ class ActivityDailyState {
 
   Future<void> saveServerTimeZone(SyncScope s, String tz) => _kv.set(serverTzKey(s), tz);
 
+  /// The zone the server switched to, while the resend is still open.
+  Future<String?> pendingTimeZone(SyncScope s) => _kv.get(pendingTzKey(s));
+
+  Future<void> savePendingTimeZone(SyncScope s, String tz) => _kv.set(pendingTzKey(s), tz);
+
+  Future<void> clearPendingTimeZone(SyncScope s) => _kv.remove(pendingTzKey(s));
+
+  // --- migration ---
+
+  /// Moves the keys of the connection [s] that an earlier version wrote to the
+  /// main store (SharedPreferences in the app: part of the backup) to the
+  /// state store, then removes them from the main store. A key that already
+  /// exists in the state store wins (the old one is just removed). A key is
+  /// only removed after the copy was read back; if anything fails, the old key
+  /// stays and the next run tries again. Returns the number of moved keys.
+  Future<int> migrateLegacy(SyncScope s) async {
+    final old = _legacy;
+    if (old == null) return 0;
+    final p = _base(s);
+    final keys = [for (final k in await old.keys()) if (k.startsWith(p)) k];
+    var moved = 0;
+    for (final k in keys) {
+      final v = await old.get(k);
+      if (v == null) continue;
+      final existing = await _kv.get(k);
+      if (existing == null) {
+        await _kv.set(k, v);
+        if (await _kv.get(k) != v) throw StateError('activity state migration: read back differs');
+        moved++;
+      }
+      await old.remove(k);
+    }
+    return moved;
+  }
+
   // --- clearing ---
 
-  /// Anchor, sent values and index of one type.
+  /// Anchor, sent values and index of one type (in the state store and, for
+  /// leftovers of an earlier version, in the main store).
   Future<void> clearType(SyncScope s, String type) async {
-    await _kv.remove(anchorKey(s, type));
-    await _kv.remove(sentKey(s, type));
-    for (final k in await _shardKeys(s, type)) {
-      await _kv.remove(k);
+    for (final kv in _both) {
+      await kv.remove(anchorKey(s, type));
+      await kv.remove(sentKey(s, type));
+      final p = indexPrefix(s, type);
+      for (final k in [for (final k in await kv.keys()) if (k.startsWith(p)) k]) {
+        await kv.remove(k);
+      }
     }
   }
 
@@ -189,19 +258,27 @@ class ActivityDailyState {
   /// switched off, connection removed). Nothing is deleted on the server.
   Future<int> clearAll(SyncScope s) async {
     final p = _base(s);
-    final keys = [for (final k in await _kv.keys()) if (k.startsWith(p)) k];
-    for (final k in keys) {
-      await _kv.remove(k);
+    var n = 0;
+    for (final kv in _both) {
+      final keys = [for (final k in await kv.keys()) if (k.startsWith(p)) k];
+      for (final k in keys) {
+        await kv.remove(k);
+      }
+      n += keys.length;
     }
-    return keys.length;
+    return n;
   }
 
   /// Anchors and sent values, **keeping** the index: next run reads the whole
   /// look-back and sends every day again (e.g. after a time zone change).
   Future<void> clearAnchorsAndSent(SyncScope s, Iterable<String> types) async {
     for (final t in types) {
-      await _kv.remove(anchorKey(s, t));
-      await _kv.remove(sentKey(s, t));
+      for (final kv in _both) {
+        await kv.remove(anchorKey(s, t));
+        await kv.remove(sentKey(s, t));
+      }
     }
   }
+
+  Iterable<KeyValueStore> get _both => [_kv, ?_legacy];
 }
