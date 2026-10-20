@@ -277,7 +277,7 @@ void main() {
     final sync = ActivityDailySync(
       bridge: bridge,
       catalog: testCatalog(),
-      state: SyncStateStore(InMemoryKeyValueStore()),
+      state: SyncStateStore(InMemoryKeyValueStore(), activityKv: InMemoryKeyValueStore()),
       uploader: _Collect(sent),
       session: const FixedSession('u', 'p'),
       clock: () => DateTime.now(),

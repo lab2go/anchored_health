@@ -28,8 +28,9 @@ class ActivityAnchor {
 /// `<uid>/<pid>/<platform>/activity/...`, so `SyncStateStore.resetUser` removes
 /// them with everything else; [clearType]/[clearAll] do it on revocation.
 ///
-/// **Where it lives:** in `SyncStateStore.activityKv` if the app gave one (a
-/// file store outside the backup, review A3), otherwise in `SyncStateStore.kv`.
+/// **Where it lives:** in `SyncStateStore.activityKv` (a file store outside the
+/// backup, review A3). Without one it falls back to `SyncStateStore.kv` only
+/// where `ActivityDailySync` allows it (`allowStateInMainStore`, review D1).
 /// The values are health data (a daily sum per day, and which UUID touched
 /// which day), so the app must not keep them in SharedPreferences (part of the
 /// device and iCloud backup). [migrateLegacy] moves keys an earlier version
@@ -53,6 +54,30 @@ class ActivityDailyState {
   /// Where the state lives.
   KeyValueStore get _kv => state.activityKv ?? state.kv;
 
+  /// A store of its own was given (not the main store).
+  bool get hasSeparateStore => _legacy != null;
+
+  int _damaged = 0;
+
+  /// Number of unreadable (damaged) state values dropped since the last call.
+  int takeDamagedCount() {
+    final n = _damaged;
+    _damaged = 0;
+    return n;
+  }
+
+  /// Reads [key]; a damaged value is removed and counts as missing, so that the
+  /// type starts over (full read, sent again) instead of failing in every run.
+  Future<String?> _get(String key) async {
+    try {
+      return await _kv.get(key);
+    } on StateDamagedException {
+      _damaged++;
+      await _kv.remove(key);
+      return null;
+    }
+  }
+
   /// Stores that may still hold keys of an earlier version (the main store, if
   /// the state has moved to its own one).
   KeyValueStore? get _legacy {
@@ -70,7 +95,7 @@ class ActivityDailyState {
   // --- anchor ---
 
   Future<ActivityAnchor?> anchor(SyncScope s, String type) async {
-    final raw = await _kv.get(anchorKey(s, type));
+    final raw = await _get(anchorKey(s, type));
     if (raw == null) return null;
     try {
       return ActivityAnchor.fromJson((jsonDecode(raw) as Map).cast<String, Object?>());
@@ -85,7 +110,7 @@ class ActivityDailyState {
   // --- sent values ---
 
   Future<Map<LocalDay, double>> sent(SyncScope s, String type) async {
-    final raw = await _kv.get(sentKey(s, type));
+    final raw = await _get(sentKey(s, type));
     if (raw == null) return {};
     try {
       return {
@@ -120,7 +145,7 @@ class ActivityDailyState {
   }
 
   Future<Map<String, String>> _readShard(String key) async {
-    final raw = await _kv.get(key);
+    final raw = await _get(key);
     if (raw == null) return {};
     try {
       return (jsonDecode(raw) as Map).cast<String, String>();
@@ -200,12 +225,12 @@ class ActivityDailyState {
 
   // --- server time zone ---
 
-  Future<String?> serverTimeZone(SyncScope s) => _kv.get(serverTzKey(s));
+  Future<String?> serverTimeZone(SyncScope s) => _get(serverTzKey(s));
 
   Future<void> saveServerTimeZone(SyncScope s, String tz) => _kv.set(serverTzKey(s), tz);
 
   /// The zone the server switched to, while the resend is still open.
-  Future<String?> pendingTimeZone(SyncScope s) => _kv.get(pendingTzKey(s));
+  Future<String?> pendingTimeZone(SyncScope s) => _get(pendingTzKey(s));
 
   Future<void> savePendingTimeZone(SyncScope s, String tz) => _kv.set(pendingTzKey(s), tz);
 
@@ -228,7 +253,7 @@ class ActivityDailyState {
     for (final k in keys) {
       final v = await old.get(k);
       if (v == null) continue;
-      final existing = await _kv.get(k);
+      final existing = await _get(k);
       if (existing == null) {
         await _kv.set(k, v);
         if (await _kv.get(k) != v) throw StateError('activity state migration: read back differs');

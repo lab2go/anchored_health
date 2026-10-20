@@ -193,6 +193,9 @@ class FakeActivityUploader implements ActivityDailyUploader {
 
   /// Answer with empty counters (a reply that does not say what happened).
   bool silent = false;
+
+  /// Count this many more elements than were sent (an answer that does not add up).
+  int overCount = 0;
   int _calls = 0;
   int get calls => _calls;
 
@@ -225,6 +228,6 @@ class FakeActivityUploader implements ActivityDailyUploader {
       }
       rows[key] = e.valueNumeric;
     }
-    return ActivityIngestResult(inserted: ins, updated: upd, duplicates: dup, rejected: rej, timezoneId: timezoneId);
+    return ActivityIngestResult(inserted: ins + overCount, updated: upd, duplicates: dup, rejected: rej, timezoneId: timezoneId);
   }
 }

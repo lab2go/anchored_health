@@ -96,7 +96,9 @@ would otherwise upload single samples):
   is stored only after all batches of a type succeeded.
 * **What counts as accepted:** only a batch the server really took. `rejected`
   > 0 (inactive mapping, type off for the connection, consent missing, wrong
-  unit), `echo` > 0, or counters that do not add up to the batch fail the type
+  unit), `echo` > 0, or counters that do not add up **exactly** to the batch size
+  (`inserted + updated + deleted + duplicates + skipped_deleted`; the server gives
+  every element exactly one status) fail the type
   (`ActivitySyncResult.failedTypes`, reason in `failureReasons`, constants in
   `ActivityFailure`) and are **not** stored as sent; the anchor stays. The next run
   sends the days again, so the run that happens before the mappings are active
@@ -118,8 +120,22 @@ would otherwise upload single samples):
   (`FileKeyValueStore`); SharedPreferences cannot be excluded from backups.
   Keys an earlier version wrote to the main store are moved over on the first
   `syncNow` of a connection and removed from there (`migrated_keys`);
-  `forget` and `resetUser` clear both stores. Without `activityKv` everything
-  stays in the one store as before (then that store must not be backed up).
+  `forget` and `resetUser` clear both stores. **There is no fallback into the
+  main store:** without `activityKv` (or with the main store passed as
+  `activityKv`) `syncNow` refuses the run, fails every requested type with the
+  reason `no_state_store` (`ActivityFailure.noStateStore`) and reads, stores and
+  sends nothing; `collect`, `commit` and `noteServerTimeZone` throw a
+  `StateError`. Only an app that knows its main store is not backed up sets
+  `ActivityDailyConfig(allowStateInMainStore: true)`. If
+  `openBackupExcludedStateStore()` throws, the app must not start a daily-totals
+  run (never pass `null`).
+  The file store is robust against its own failures: the temp file of a write has
+  a unique name (and is removed when the write fails); a directory that vanished
+  is not created as a plain directory but only through the native
+  `prepareStateDirectory` (with the exclusion mark again, otherwise the write
+  fails); a damaged file does not fail the type in every run: it is dropped and
+  counted (`state_damaged` in `ActivitySyncResult.counters`), the type starts over
+  (full read, days are sent again; the server overwrites with the same values).
 * **Changes and deletions:** a local index (UUID -> days of the last 7 days,
   `ActivityDailyConfig.indexDays`, monthly shards under
   `<uid>/<pid>/<platform>/activity/idx/...`) tells which
@@ -137,10 +153,36 @@ would otherwise upload single samples):
   period (<= 2000 elements, <= 45 days per batch, newest first). The answer's
   `timezone_id` is stored; when it changes the whole look-back is sent again.
   The new zone is only kept after that resend went through (an abort or error in
-  between leaves the resend open for the next run).
+  between leaves the resend open for the next run). This also holds for
+  `noteServerTimeZone`: a different zone is only noted as open (`tz_pending`).
 * **Revocation:** `ActivityDailySync.forget(scope)` removes anchors, sent values
   and the index of a connection (`SyncStateStore.resetUser` does it too). The
   server is not touched.
+* **Known limits** (accepted, documented; none corrupts data):
+  * *Interrupted zone resend does not resume (review P3 D2).* A resend after a
+    time zone change that is aborted or fails starts again from the beginning in
+    the next run: the open resend deletes the anchors and the sent values of the
+    types, so batches that were already taken are sent again. Zone changes of the
+    server side day boundary (profile zone) are rare; the cost is a repeated
+    upload of the look-back (the server overwrites with the same values).
+  * *A partly turned-down batch blocks its type (review P3 D3).* The server
+    stores the good elements of a batch and turns down only the bad ones. The
+    plugin treats `rejected` > 0 as a failure of the whole batch and counts none of
+    it as sent. If one element stays bad (for example a day just outside the
+    server's backfill window of the profile zone), the same batch fails in every
+    run and the older batches behind it (newest first) are never reached; the anchor
+    does not advance. This is visible (`failureReasons`: `rejected`) and harmless
+    for the data. Keep the look-back at or below the mapping's backfill cap
+    (checked by the plugin) and do not retry in a tight loop; back off.
+* **Activation (review P3 D4, for step P4 of the app):** the five types only go
+  through when the server has them switched on in **both** places: the mapping
+  (`health_type_map`: `is_active`, `import_supported`) **and** the type catalog
+  (`vital_types.is_active`). State of the live server on 20.10.2026: the mapping
+  rows of all five types are inactive, and the catalog flag is false for
+  `flightsClimbed` and `appleExerciseTime` (true for steps, distance, active
+  energy). Switching on only the mapping makes these two types fail permanently
+  with `rejected`. The app's gate before a run should check the active mapping
+  and the catalog flag; the activation step has to cover both tables.
 * **Android:** placeholder only (`UnsupportedActivityDailyBridge`, catalog
   entries with `importSupported: false`); Health Connect follows in a later
   package.

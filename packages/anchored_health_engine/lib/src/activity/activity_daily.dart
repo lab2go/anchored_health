@@ -99,6 +99,7 @@ class ActivityDailyConfig {
     this.batchSize = 2000,
     this.batchSpanDays = 45,
     this.lockTimeout = const Duration(minutes: 10),
+    this.allowStateInMainStore = false,
   });
 
   /// **Fixed** name of the merged HealthKit sum, sent as `source_package`.
@@ -124,6 +125,25 @@ class ActivityDailyConfig {
   final int batchSize;
   final int batchSpanDays;
   final Duration lockTimeout;
+
+  /// Without `SyncStateStore.activityKv` the per-day values and the UUID index
+  /// would land in the main store (SharedPreferences in the app: part of the
+  /// device and iCloud backup). That is refused by default: [ActivityDailySync]
+  /// fails with [ActivityFailure.noStateStore] and writes nothing (review P3 D1).
+  /// Set `true` only if the app knows that its main store is not backed up.
+  final bool allowStateInMainStore;
+
+  ActivityDailyConfig copyWith({bool? allowStateInMainStore}) => ActivityDailyConfig(
+        sourcePackage: sourcePackage,
+        sourceName: sourceName,
+        defaultLookbackDays: defaultLookbackDays,
+        indexDays: indexDays,
+        refsPageLimit: refsPageLimit,
+        batchSize: batchSize,
+        batchSpanDays: batchSpanDays,
+        lockTimeout: lockTimeout,
+        allowStateInMainStore: allowStateInMainStore ?? this.allowStateInMainStore,
+      );
 }
 
 /// Default of [ActivityDailyConfig.sourcePackage].
@@ -207,18 +227,26 @@ typedef ActivityProgressCallback = void Function(ActivityProgress progress);
 /// Why a type failed (see [ActivitySyncResult.failureReasons]).
 class ActivityFailure {
   /// The server turned elements down (inactive mapping, type switched off for
-  /// the connection, consent missing, wrong unit, ...). Nothing of the batch
-  /// was stored; neither the batch nor the anchor was committed.
+  /// the connection, consent missing, wrong unit, ...). The plugin counts
+  /// nothing of the batch as sent and does not commit the anchor. If only some
+  /// elements were turned down, the server may well have stored the others; the
+  /// whole batch (and every older one behind it) is tried again by the next
+  /// run (known limit, README).
   static const rejected = 'rejected';
 
   /// The server dropped elements as echo of the app's own packages.
   static const echo = 'echo';
 
-  /// The server's counters do not add up to the batch (answer not trusted).
+  /// The server's counters do not add up to the batch size (answer not trusted).
   static const answerMismatch = 'answer_mismatch';
 
   /// The type has no server id in the catalog.
   static const noVitalTypeId = 'no_vital_type_id';
+
+  /// The app gave no separate state store (`SyncStateStore.activityKv`) and did
+  /// not set [ActivityDailyConfig.allowStateInMainStore]: the run is refused,
+  /// nothing is read, stored or sent (health data must not end up in a backup).
+  static const noStateStore = 'no_state_store';
 
   /// Network, server error, bridge error.
   static const error = 'error';
@@ -300,6 +328,17 @@ class ActivityDailySync {
   final ActivityDailyState store;
   final DateTime Function() _clock;
 
+  /// `true` if the state may be written: a separate store was given, or the
+  /// app expressly allows the main store.
+  bool get hasStateStore => store.hasSeparateStore || config.allowStateInMainStore;
+
+  void _requireStateStore() {
+    if (!hasStateStore) {
+      throw StateError('${ActivityFailure.noStateStore}: SyncStateStore.activityKv is missing '
+          '(or set ActivityDailyConfig.allowStateInMainStore)');
+    }
+  }
+
   bool _sessionMatches(HealthLink link) =>
       session.currentUserId == link.userId && session.currentProfileId == link.profileId;
 
@@ -323,14 +362,14 @@ class ActivityDailySync {
     }
   }
 
-  /// Stores the zone the server reported. Returns `true` if it differs from
-  /// the stored one: the caller has to send the whole look-back again
-  /// ([syncNow] does this itself).
+  /// Notes the zone the server reported. The very first value is stored. A
+  /// **different** one is only noted as an open resend (`tz_pending`, review
+  /// P3 D6): the stored zone changes when [syncNow] has sent the look-back again.
+  /// Returns `true` if it differs from the stored one: the whole look-back has to
+  /// be sent again ([syncNow] does this itself).
   Future<bool> noteServerTimeZone(SyncScope scope, String? timezoneId) async {
-    if (timezoneId == null || timezoneId.isEmpty) return false;
-    final old = await store.serverTimeZone(scope);
-    if (old != timezoneId) await store.saveServerTimeZone(scope, timezoneId);
-    return old != null && old != timezoneId;
+    _requireStateStore();
+    return _zoneDiffers(scope, timezoneId);
   }
 
   /// Finds the days to send for one type. Reads only; stores nothing until
@@ -342,6 +381,7 @@ class ActivityDailySync {
     bool forceFull = false,
     bool resendAll = false,
   }) async {
+    _requireStateStore();
     _checkActivityType(platformType);
     final entry = _entry(scope.platform, platformType);
     if (entry == null) throw ArgumentError.value(platformType, 'platformType', 'no daily total entry in the catalog');
@@ -463,6 +503,7 @@ class ActivityDailySync {
   /// Stores anchor, accepted values and index after the **whole** plan was
   /// uploaded (not before).
   Future<void> commit(ActivityTypePlan plan) async {
+    _requireStateStore();
     final scope = plan.scope;
     final type = plan.platformType;
     final sent = await store.sent(scope, type);
@@ -533,6 +574,13 @@ class ActivityDailySync {
     for (final t in types) {
       _checkActivityType(t);
     }
+    if (!hasStateStore) {
+      // Health data must not fall back into the main store (backup): refuse, touch nothing.
+      return ActivitySyncResult(SyncOutcome.error,
+          counters: {ActivityFailure.noStateStore: 1},
+          failedTypes: types.toList(),
+          failureReasons: {for (final t in types) t: ActivityFailure.noStateStore});
+    }
     if (!_sessionMatches(link)) return ActivitySyncResult(SyncOutcome.sessionMismatch);
     final scope = link.scope;
     if (!await state.acquireRunLock(scope, _clock(), timeout: config.lockTimeout)) {
@@ -577,6 +625,7 @@ class ActivityDailySync {
       }
     } finally {
       await state.releaseRunLock(scope);
+      _add(result, 'state_damaged', store.takeDamagedCount());
     }
     final outcome = failed.isEmpty
         ? (result.stopped ? SyncOutcome.partial : SyncOutcome.success)
@@ -610,7 +659,8 @@ class ActivityDailySync {
     if (r.rejected > 0) return ActivityFailure.rejected;
     if (r.echo > 0) return ActivityFailure.echo;
     final accounted = r.inserted + r.updated + r.deleted + r.duplicates + r.skippedDeleted;
-    if (accounted < sent) return ActivityFailure.answerMismatch;
+    // every element gets exactly one status on the server, so the counters add up exactly
+    if (accounted != sent) return ActivityFailure.answerMismatch;
     return null;
   }
 

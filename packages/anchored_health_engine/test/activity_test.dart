@@ -20,7 +20,9 @@ class Harness {
     this.timezone = 'Europe/Berlin',
     this.activityKv,
     InMemoryKeyValueStore? sharedKv,
-  })  : clock = now ?? _now,
+    bool strictState = false,
+  })  : config = (activityKv == null && !strictState) ? config.copyWith(allowStateInMainStore: true) : config,
+        clock = now ?? _now,
         store = FakeActivityStore(calendar: calendar, zone: timezone),
         uploader = FakeActivityUploader(timezoneId: timezone),
         kv = sharedKv ?? InMemoryKeyValueStore() {
@@ -31,12 +33,15 @@ class Harness {
       state: state,
       uploader: uploader,
       session: session ?? const FixedSession('user-a', 'profile-a'),
-      config: config,
+      config: this.config,
       calendar: calendar,
       clock: () => clock,
     );
   }
 
+  /// Without a separate state store the harness allows the main store (the old
+  /// single-store behaviour), unless [strictState] asks for the default.
+  final ActivityDailyConfig config;
   final String timezone;
 
   /// Separate state store (file store outside the backup), null = everything in [kv].
@@ -564,6 +569,7 @@ void main() {
         state: h.state,
         uploader: h.uploader,
         session: const FixedSession('user-a', 'profile-a'),
+        config: h.config,
         calendar: const UtcCalendar(),
         clock: () => h.clock,
       );
@@ -667,6 +673,20 @@ void main() {
       expect(r.outcome, SyncOutcome.error);
       expect(r.failureReasons[_steps], ActivityFailure.answerMismatch);
       expect(await h.sync.store.sent(h.link.scope, _steps), isEmpty);
+    });
+
+    test('an answer that counts more than was sent is not trusted either (review P3 D7)', () async {
+      final h = Harness();
+      h.steps('2026-10-18', 8, 100);
+      h.steps('2026-10-17', 8, 100);
+      h.uploader.overCount = 1;
+      final r = await h.run();
+      expect(r.outcome, SyncOutcome.error);
+      expect(r.failureReasons[_steps], ActivityFailure.answerMismatch);
+      expect(await h.sync.store.sent(h.link.scope, _steps), isEmpty);
+      expect(await h.sync.store.anchor(h.link.scope, _steps), isNull);
+      h.uploader.overCount = 0; // an honest answer goes through
+      expect((await h.run()).outcome, SyncOutcome.success);
     });
 
     test('one of two types is turned down: partial, the other type is committed', () async {
@@ -775,12 +795,22 @@ void main() {
       expect(h.uploader.batches, isEmpty);
     });
 
-    test('noteServerTimeZone: first value is not a change', () async {
+    test('noteServerTimeZone: first value is not a change; a different zone is only noted as open (review P3 D6)', () async {
       final h = Harness();
-      expect(await h.sync.noteServerTimeZone(h.link.scope, 'Europe/Berlin'), isFalse);
-      expect(await h.sync.noteServerTimeZone(h.link.scope, 'Europe/Berlin'), isFalse);
-      expect(await h.sync.noteServerTimeZone(h.link.scope, 'Asia/Tokyo'), isTrue);
-      expect(await h.sync.noteServerTimeZone(h.link.scope, null), isFalse);
+      final scope = h.link.scope;
+      expect(await h.sync.noteServerTimeZone(scope, 'Europe/Berlin'), isFalse);
+      expect(await h.sync.noteServerTimeZone(scope, 'Europe/Berlin'), isFalse);
+      expect(await h.sync.noteServerTimeZone(scope, null), isFalse);
+      expect(await h.sync.noteServerTimeZone(scope, 'Asia/Tokyo'), isTrue);
+      expect(await h.sync.store.serverTimeZone(scope), 'Europe/Berlin', reason: 'the stored zone waits for the resend');
+      expect(await h.sync.store.pendingTimeZone(scope), 'Asia/Tokyo');
+      // the next run sends the look-back again and only then the new zone counts
+      h.steps('2026-10-18', 8, 100);
+      h.uploader.timezoneId = 'Asia/Tokyo';
+      final r = await h.run();
+      expect(r.timezoneChanged, isTrue);
+      expect(await h.sync.store.serverTimeZone(scope), 'Asia/Tokyo');
+      expect(await h.sync.store.pendingTimeZone(scope), isNull);
     });
 
     test('the device zone changes: the whole look-back is read, changed days are sent', () async {
@@ -890,6 +920,74 @@ void main() {
     });
   });
 
+  group('no state store (review P3 D1)', () {
+    test('without activityKv a run is refused: reason no_state_store, nothing read, stored or sent', () async {
+      final h = Harness(strictState: true);
+      h.steps('2026-10-18', 8, 100);
+      final r = await h.run({_steps, 'flightsClimbed'});
+      expect(r.outcome, SyncOutcome.error);
+      expect(r.failedTypes.toSet(), {_steps, 'flightsClimbed'});
+      expect(r.failureReasons, {_steps: ActivityFailure.noStateStore, 'flightsClimbed': ActivityFailure.noStateStore});
+      expect(r['no_state_store'], 1);
+      expect(h.store.calls, isEmpty);
+      expect(h.uploader.calls, 0);
+      expect(h.kv.data, isEmpty, reason: 'not a single key in the main store, not even the run lock');
+    });
+
+    test('also when the same store is passed as activityKv (it is the main store)', () async {
+      final h = Harness(strictState: true);
+      final sync = ActivityDailySync(
+          bridge: h.store,
+          catalog: testCatalog(),
+          state: SyncStateStore(h.kv, activityKv: h.kv),
+          uploader: h.uploader,
+          session: const FixedSession('user-a', 'profile-a'),
+          calendar: const UtcCalendar(),
+          clock: () => _now);
+      h.steps('2026-10-18', 8, 100);
+      final r = await sync.syncNow(h.link, types: {_steps});
+      expect(r.failureReasons[_steps], ActivityFailure.noStateStore);
+      expect(h.kv.data, isEmpty);
+    });
+
+    test('collect, commit and noteServerTimeZone do not write to the main store either', () async {
+      final h = Harness(strictState: true);
+      h.steps('2026-10-18', 8, 100);
+      expect(h.sync.hasStateStore, isFalse);
+      await expectLater(h.sync.collect(h.link.scope, _steps), throwsStateError);
+      await expectLater(h.sync.noteServerTimeZone(h.link.scope, 'Europe/Berlin'), throwsStateError);
+      final ok = Harness();
+      ok.steps('2026-10-18', 8, 100);
+      final plan = await ok.sync.collect(ok.link.scope, _steps);
+      await expectLater(h.sync.commit(plan), throwsStateError);
+      expect(h.kv.data, isEmpty);
+    });
+
+    test('forget() still works (it only removes)', () async {
+      final h = Harness(strictState: true);
+      await h.sync.forget(h.link.scope);
+      await h.sync.forget(h.link.scope, types: [_steps]);
+    });
+
+    test('allowStateInMainStore: true is the express opt-in to the main store', () async {
+      final h = Harness(strictState: true, config: const ActivityDailyConfig(allowStateInMainStore: true));
+      h.steps('2026-10-18', 8, 100);
+      expect(h.sync.hasStateStore, isTrue);
+      final r = await h.run();
+      expect(r.outcome, SyncOutcome.success);
+      expect(h.row('2026-10-18'), 100);
+      expect(h.kv.data.keys.where((k) => k.contains('/activity/')), isNotEmpty);
+    });
+
+    test('a separate store needs no opt-in (default config)', () async {
+      final h = Harness(activityKv: InMemoryKeyValueStore());
+      expect(const ActivityDailyConfig().allowStateInMainStore, isFalse);
+      expect(h.sync.hasStateStore, isTrue);
+      h.steps('2026-10-18', 8, 100);
+      expect((await h.run()).outcome, SyncOutcome.success);
+    });
+  });
+
   group('state outside the backup (review P3 A3)', () {
     late Directory dir;
     late FileKeyValueStore files;
@@ -996,6 +1094,39 @@ void main() {
       final r = await sync.syncNow(old.link, types: {_steps});
       expect(r['migration_failed'], 1);
       expect((await activityKeys(old.kv)).toSet(), legacyKeys.toSet(), reason: 'nothing lost');
+    });
+
+    test('a damaged state file is dropped and counted, the run starts over instead of failing every time (review P3 D5)', () async {
+      final h = Harness(activityKv: files);
+      h.steps('2026-10-18', 8, 100);
+      h.steps('2026-10-10', 8, 200);
+      await h.run();
+      final scope = h.link.scope;
+      final anchorFile = File('${files.directory.path}/${FileKeyValueStore.fileNameOf(h.sync.store.anchorKey(scope, _steps))}');
+      anchorFile.writeAsBytesSync([0xff, 0xfe, 0xfd, 0x80]); // not valid UTF-8
+      h.uploader.batches.clear();
+      final r = await h.run();
+      expect(r.outcome, SyncOutcome.success);
+      expect(r['state_damaged'], 1);
+      expect(r['full_window_reads'], 1, reason: 'no anchor: the look-back is read again');
+      expect(h.uploader.batches, isEmpty, reason: 'the sent values are intact, nothing changed');
+      final r2 = await h.run();
+      expect(r2['state_damaged'], 0);
+      expect(r2.outcome, SyncOutcome.success);
+    });
+
+    test('a damaged zone file does not stop the run either', () async {
+      final h = Harness(activityKv: files);
+      h.steps('2026-10-18', 8, 100);
+      await h.run();
+      final scope = h.link.scope;
+      File('${files.directory.path}/${FileKeyValueStore.fileNameOf(h.sync.store.serverTzKey(scope))}')
+          .writeAsBytesSync([0xc3, 0x28]);
+      h.steps('2026-10-19', 9, 5); // work for the run, so the zone is read
+      final r = await h.run();
+      expect(r.outcome, SyncOutcome.success);
+      expect(r['state_damaged'], 1);
+      expect(await h.sync.store.serverTimeZone(scope), 'Europe/Berlin', reason: 'learned again from the answer');
     });
 
     test('forget() and resetUser clear both stores, also leftovers in the main store', () async {

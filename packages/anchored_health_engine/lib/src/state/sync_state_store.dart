@@ -12,6 +12,16 @@ abstract class KeyValueStore {
   Future<Iterable<String>> keys();
 }
 
+/// A [KeyValueStore.get] could not read the stored value because the data is
+/// damaged (e.g. a file that is not valid text). The value is unusable; the
+/// state layer treats it as missing and starts over for that key (review P3 D5).
+class StateDamagedException implements Exception {
+  const StateDamagedException(this.key);
+  final String key;
+  @override
+  String toString() => 'StateDamagedException($key)';
+}
+
 class InMemoryKeyValueStore implements KeyValueStore {
   final Map<String, String> data = {};
   @override
@@ -132,12 +142,14 @@ class SyncStateStore {
   /// keys: per-day values and the UUID -> day index, i.e. health data). The app
   /// passes a store that lives **outside the device and iCloud backup**
   /// (`FileKeyValueStore` in a directory with `NSURLIsExcludedFromBackupKey`,
-  /// see `openBackupExcludedStateStore`). Null = everything in [kv] (as before;
-  /// then [kv] must not be part of a backup either).
+  /// see `openBackupExcludedStateStore`). Null = no place for that state.
   ///
   /// With a separate store, keys written to [kv] by an earlier version are
   /// moved over on the first run of [ActivityDailySync.syncNow] (and removed
   /// from [kv]).
+  ///
+  /// [ActivityDailySync] refuses to run without it (`no_state_store`) unless the
+  /// app sets `ActivityDailyConfig.allowStateInMainStore` (review P3 D1).
   final KeyValueStore? activityKv;
   final Random _random;
 

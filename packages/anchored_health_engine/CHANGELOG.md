@@ -25,6 +25,17 @@
   and `openBackupExcludedStateStore()` (`native_bridge.dart`) for a directory outside
   device and iCloud backups; keys of an earlier version move over on the first run;
   UUID index 35 -> 7 days (`ActivityDailyConfig.indexDays`).
+- Review P3 D1: no silent fallback into the main store. Without `SyncStateStore.activityKv`
+  `ActivityDailySync.syncNow` fails every type with `no_state_store`
+  (`ActivityFailure.noStateStore`) and touches nothing; `collect`, `commit`,
+  `noteServerTimeZone` throw `StateError`; opt-in `ActivityDailyConfig.allowStateInMainStore`.
+- Review P3 D5: `FileKeyValueStore` writes through a unique temp file (removed on failure);
+  a vanished directory is only recreated through `recreateDirectory` (for
+  `openBackupExcludedStateStore`: the native `prepareStateDirectory`, marked); a damaged file
+  throws `StateDamagedException`, the activity state drops it and counts `state_damaged`.
+- Review P3 D6: `noteServerTimeZone` respects `tz_pending` (a different zone is only noted).
+- Review P3 D7: `answer_mismatch` when the counters differ from the batch size (`!=`).
+- Known limits D2/D3 and the activation note D4 are in the README.
 
 ## 0.2.0 (draft, no tag)
 
